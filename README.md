@@ -1,8 +1,7 @@
 # Synglot: Synthetic Data Generation and Translation Toolkit
 
-[![PyPI version](https://img.shields.io/pypi/v/synglot.svg)](https://pypi.org/project/synglot/) <!-- Placeholder -->
-[![Build Status](https://img.shields.io/travis/com/yourusername/synglot.svg)](https://travis-ci.com/yourusername/synglot) <!-- Placeholder -->
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) <!-- Placeholder -->
+[![Build Status](https://img.shields.io/travis/com/yourusername/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 `Synglot` is a Python library designed to empower researchers and developers in the field of Natural Language Processing (NLP) by providing a flexible and extensible toolkit for:
 
@@ -10,8 +9,6 @@
 - **Machine Translation**: Easily translate text between multiple languages using both open-source Hugging Face models and commercial LLM APIs.
 - **Dataset Management**: Handle and manipulate multilingual datasets efficiently, with support for loading from Hugging Face Hub, local files, and saving in common formats.
 - **Text Analysis**: Analyze your datasets to understand their characteristics, including length distributions, token counts, and vocabulary.
-
-Whether you're looking to augment existing datasets, create new linguistic resources, or benchmark translation quality, `synglot` aims to simplify your workflow.
 
 ## Key Features
 
@@ -29,8 +26,10 @@ Whether you're looking to augment existing datasets, create new linguistic resou
 
 **From Source (Recommended for development):**
 ```bash
-git clone https://github.com/yourusername/synglot.git # Replace with your repo URL
+git clone https://github.com/manifold-intelligence/synglot.git
 cd synglot
+uv venv
+source .venv/bin/activate
 uv sync
 ```
 
@@ -121,7 +120,7 @@ See `synglot/utils/config.py` for the default structure and `docs/api/utils.md` 
 - **`HFTranslator`**: Generic Hugging Face model translator (implementation in progress).
 
 ### Generation
-- **`HFGenerator`**: Uses text-generation models from Hugging Face (e.g., GPT-2, Qwen, Llama).
+- **`HFGenerator`**: Uses text-generation models from Hugging Face (e.g. Qwen, Llama).
 - **`OpenAIGenerator`**: For OpenAI models (implementation in progress).
 
 ## Contributing
@@ -138,7 +137,7 @@ Please ensure your code adheres to the existing style and includes tests where a
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details (assuming a LICENSE file will be added).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgements
 
