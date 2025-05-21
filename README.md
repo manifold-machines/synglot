@@ -10,6 +10,12 @@
 - **Dataset Management**: Handle and manipulate multilingual datasets efficiently, with support for loading from Hugging Face Hub, local files, and saving in common formats.
 - **Text Analysis**: Analyze your datasets to understand their characteristics, including length distributions, token counts, and vocabulary.
 
+## Roadmap
+
+- **Implement `LLMTranslator`**: Integrate support for various commercial LLM APIs for translation.
+- **Implement `OpenAIGenerator`**: Add a generator backend for API models (e.g., GPT-4o, Claude, Gemini).
+- **More Cookbooks**: Develop and document more practical implementations of and use-cases for `synglot`.
+
 ## Key Features
 
 - **Modular Design**: Easily extendable components for generation, translation, and data handling.
