@@ -1,6 +1,6 @@
 # Synglot: Synthetic Data Generation and Translation Toolkit
 
-[![Build Status](https://img.shields.io/travis/com/yourusername/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
+[![Build Status](https://img.shields.io/travis/com/manifold-intelligence/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 `Synglot` is a Python library designed to empower researchers and developers in the field of Natural Language Processing (NLP) by providing a flexible and extensible toolkit for:
@@ -34,6 +34,8 @@
 ```bash
 git clone https://github.com/manifold-intelligence/synglot.git
 cd synglot
+# To install uv on macOS and Linux:
+curl -LsSf https://astral.sh/uv/install.sh | sh
 uv venv
 source .venv/bin/activate
 uv sync
@@ -150,7 +152,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Hugging Face for their `transformers` and `datasets` libraries.
 - The NLP group at the University of Helsinki for their work on the MarianMT models, which are used as the default for the `StandardTranslator`.
 - The open-source community for the models and tools that make projects like this possible.
-
----
-
-*This README was partially generated with assistance from an AI model.* 
