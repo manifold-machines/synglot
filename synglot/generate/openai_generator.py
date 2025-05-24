@@ -1,3 +1,5 @@
+from .base import Generator
+
 class OpenAIGenerator(Generator):
     """Generator using OpenAI API."""
     

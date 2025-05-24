@@ -30,6 +30,7 @@ dependencies = [
     "PyYAML",
     "numpy",
     "sacremoses",
+    "sentencepiece",
     # Add other dependencies as needed, e.g.:
     # "openai",
     # "anthropic",
