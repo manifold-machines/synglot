@@ -3,13 +3,14 @@ import json
 import tempfile
 import os
 import logging
+from dotenv import load_dotenv
 from .base import Translator
 
 class LLMTranslator(Translator):
     """Translator using commercial LLM APIs."""
     
     def __init__(self, source_lang, target_lang, provider="openai", 
-                 model_name=None, api_key=None):
+                 model_name=None):
         """
         Initialize LLM API translator.
         
@@ -18,16 +19,18 @@ class LLMTranslator(Translator):
             target_lang (str): Target language code
             provider (str): API provider (openai, anthropic, gemini)
             model_name (str): Model name
-            api_key (str): API key
         """
         super().__init__(source_lang, target_lang)
         self.provider = provider
         self.model_name = model_name if model_name else "gpt-4.1-mini"
-        self.api_key = api_key
+        
+        # Load environment variables from .env file
+        load_dotenv()
+        self.api_key = os.getenv('OPENAI_API_KEY')
 
         if self.provider == "openai":
             if not self.api_key:
-                raise ValueError("API key is required for OpenAI provider.")
+                raise ValueError("OPENAI_API_KEY environment variable is required for OpenAI provider.")
             self.client = openai.OpenAI(api_key=self.api_key)
             self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
         # TODO: Initialize API client based on other providers
@@ -147,6 +150,9 @@ class LLMTranslator(Translator):
                 if batch_status == "completed":
                     output_file_id = self.client.batches.retrieve(batch_id).output_file_id
                     file_content = self.client.files.content(output_file_id)
+
+                    # TO DO: return the translations, instead of the whole batch
+
                     return file_content
                 elif batch_status == "failed":
                     raise RuntimeError(f"Batch job {batch_id} failed")

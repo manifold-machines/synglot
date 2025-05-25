@@ -31,6 +31,8 @@ dependencies = [
     "numpy",
     "sacremoses",
     "sentencepiece",
+    "openai",
+    "dotenv",
     # Add other dependencies as needed, e.g.:
     # "openai",
     # "anthropic",
