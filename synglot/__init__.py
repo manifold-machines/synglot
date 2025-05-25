@@ -1,4 +1,4 @@
-from .translate import Translator, LLMTranslator, StandardTranslator
+from .translate import Translator, LLMTranslator
 from .utils import config
 from .generate import Generator, HFGenerator, OpenAIGenerator
 from .analyze import Analyzer
@@ -7,7 +7,6 @@ from .dataset import Dataset
 __all__ = [
     "Translator",
     "LLMTranslator",
-    "StandardTranslator",
     "config",
     "Generator",
     "HFGenerator",

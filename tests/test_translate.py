@@ -3,16 +3,16 @@ from unittest.mock import patch, MagicMock
 import os
 import sys
 
-# Adjust the path to import the StandardTranslator class correctly
+# Adjust the path to import the LLMTranslator class correctly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from synglot.translate.std_translator import StandardTranslator
+from synglot.translate.llm_translator import LLMTranslator
 
 # Mock the Hugging Face classes
 class MockAutoTokenizer:
     def __init__(self, *args, **kwargs):
         pass
 
-    def __call__(self, text, return_tensors, padding, truncation, max_length):
+    def __call__(self, text, return_tensors, padding, truncation, max_length=None):
         # Simulate tokenization
         return {"input_ids": [[1, 2, 3]], "attention_mask": [[1, 1, 1]]} # Dummy tokenized output
 
@@ -54,17 +54,17 @@ class MockAutoModelForSeq2SeqLM:
 
 @patch('transformers.AutoTokenizer', MockAutoTokenizer)
 @patch('transformers.AutoModelForSeq2SeqLM', MockAutoModelForSeq2SeqLM)
-class TestStandardTranslator(unittest.TestCase):
+class TestLLMTranslator(unittest.TestCase):
 
     def setUp(self):
         """Set up for test methods."""
         self.source_lang = "en"
         self.target_lang = "fr"
         # Initialize with a supported language pair for most tests
-        self.translator = StandardTranslator(source_lang=self.source_lang, target_lang=self.target_lang)
+        self.translator = LLMTranslator(source_lang=self.source_lang, target_lang=self.target_lang)
 
     def test_init_successful(self):
-        """Test successful initialization of StandardTranslator."""
+        """Test successful initialization of LLMTranslator with MarianMT backend."""
         self.assertIsNotNone(self.translator.tokenizer)
         self.assertIsNotNone(self.translator.model)
         self.assertEqual(self.translator.source_lang, self.source_lang)
@@ -74,14 +74,14 @@ class TestStandardTranslator(unittest.TestCase):
     def test_init_unsupported_language_pair(self):
         """Test initialization with an unsupported language pair for MarianMT."""
         with self.assertRaises(ValueError) as context:
-            StandardTranslator(source_lang="unsupported", target_lang="lang")
+            LLMTranslator(source_lang="unsupported", target_lang="lang")
         self.assertIn("Failed to load MarianMT model for unsupported-lang", str(context.exception))
 
     def test_init_unsupported_backend(self):
         """Test initialization with an unsupported backend."""
         with self.assertRaises(NotImplementedError) as context:
-            StandardTranslator(source_lang=self.source_lang, target_lang=self.target_lang, backend="unsupported_backend")
-        self.assertIn("Backend 'unsupported_backend' is not supported by StandardTranslator", str(context.exception))
+            LLMTranslator(source_lang=self.source_lang, target_lang=self.target_lang, backend="unsupported_backend")
+        self.assertIn("Backend 'unsupported_backend' is not supported", str(context.exception))
 
     def test_translate_successful(self):
         """Test successful translation."""
@@ -112,7 +112,7 @@ class TestStandardTranslator(unittest.TestCase):
         """Test translate method with an unsupported backend (should be caught in init, but good to check)."""
         # This scenario is technically prevented by __init__,
         # but this tests the else branch in translate() directly.
-        translator = StandardTranslator(self.source_lang, self.target_lang) # Re-init to ensure it's marianmt
+        translator = LLMTranslator(self.source_lang, self.target_lang) # Re-init to ensure it's marianmt
         translator.backend = "other_backend" # Manually override backend after init
         with self.assertRaises(NotImplementedError) as context:
             translator.translate("Some text")
@@ -160,7 +160,7 @@ class TestStandardTranslator(unittest.TestCase):
     def test_translate_batch_fallback_to_superclass(self, mock_base_translate_batch):
         """Test that translate_batch falls back to superclass for non-marianmt backends."""
         # Initialize a new translator for this test to avoid altering self.translator state
-        translator_other_backend = StandardTranslator(self.source_lang, self.target_lang)
+        translator_other_backend = LLMTranslator(self.source_lang, self.target_lang)
         translator_other_backend.backend = "other_backend" # Manually set backend
 
         texts = ["text1", "text2"]
