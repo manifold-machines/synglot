@@ -44,7 +44,7 @@ class StandardTranslator(Translator):
             # And then: encoded_text = self.tokenizer(text, return_tensors="pt", truncation=True, padding=True)
             # For Helsinki-NLP models, direct tokenization is usually fine.
 
-            inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True, max_length=512)
+            inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True)
             translated_tokens = self.model.generate(**inputs)
             translated_text = self.tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
             return translated_text
