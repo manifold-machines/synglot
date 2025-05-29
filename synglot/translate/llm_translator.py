@@ -72,7 +72,7 @@ class LLMTranslator(Translator):
                 response = self.client.chat.completions.create(
                     model=self.model_name,
                     messages=[
-                        {"role": "system", "content": f"You are a translator. Translate the following text from {self.source_lang} to {self.target_lang}."},
+                        {"role": "system", "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."},
                         {"role": "user", "content": text}
                     ],
                     max_completion_tokens=self.max_gen_tokens,
@@ -132,7 +132,7 @@ class LLMTranslator(Translator):
                                 "messages": [
                                     {
                                         "role": "system",
-                                        "content": f"You are a translator. Translate the following text from {self.source_lang} to {self.target_lang}."
+                                        "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
                                     },
                                     {
                                         "role": "user",
