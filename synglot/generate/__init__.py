@@ -1,7 +1,5 @@
-from .hf_generator import HFGenerator
 from .base import Generator
-from .openai_generator import OpenAIGenerator
+from .llm_generator import LLMGenerator
 
 __all__ = ["Generator",
-           "HFGenerator",
-           "OpenAIGenerator"] 
+           "LLMGenerator"] 

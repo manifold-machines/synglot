@@ -3,12 +3,24 @@
 Synglot CLI - Command Line Interface for Synthetic Data Generation and Translation Toolkit
 
 Usage examples:
-  python main.py translate --dataset-path data.json --columns text,title --target-lang es --source-lang en
-  python main.py translate --dataset-path data.json --target-lang es --source-lang en  # Translates all columns
-  python main.py translate --hf-dataset wmt16 --hf-config de-en --columns translation.en --target-lang de --source-lang en  
-  python main.py translate --hf-dataset wmt16 --hf-config de-en --target-lang de --source-lang en  # Translates all columns
-  python main.py generate --target-lang es --n-samples 100 --prompt "Write about technology" --output generated_data.json
-  python main.py generate --target-lang fr --mode pretraining --domain science --n-samples 50
+
+Translation:
+  
+# Translate all columns automatically
+python main.py translate --hf-dataset wmt16 --target-lang mk --source-lang en --backend openai
+  
+# Use batch translation for better performance
+python main.py translate --hf-dataset wmt16 --target-lang mk --source-lang en --backend openai --use-batch --batch-size 50
+
+Generation:
+  
+# Generate pretraining data
+python main.py generate --target-lang fr --mode pretraining --domain science --n-samples 5 --min-length 100 --max-length 300
+
+# Generate large-scale pretraining data using OpenAI batch API for cost efficiency  
+python main.py generate --target-lang es --mode pretraining --domain medical --backend openai --n-samples 1000 --min-length 150 --max-length 500 --use-batch --batch-job-description "Medical pretraining data generation"
+
+
 """
 
 import argparse
@@ -17,11 +29,13 @@ import os
 import sys
 from pathlib import Path
 from typing import List, Optional
+import random
+from datetime import datetime
 
 # Add the current directory to Python path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from synglot import Dataset, LLMTranslator, HFGenerator, OpenAIGenerator
+from synglot import Dataset, LLMTranslator, LLMGenerator
 from synglot.utils import config
 
 
@@ -88,7 +102,7 @@ def setup_translate_parser(subparsers):
     translate_parser.add_argument(
         '--backend',
         type=str,
-        choices=['marianmt', 'openai'],
+        choices=['marianmt', 'openai', 'google'],
         default='openai',
         help='Translation backend to use (default: openai)'
     )
@@ -148,7 +162,7 @@ def setup_generate_parser(subparsers):
     generate_parser.add_argument(
         '--mode',
         type=str,
-        choices=['general', 'pretraining', 'conversation'],
+        choices=['general', 'pretraining', 'conversation', 'material'],
         default='general',
         help='Generation mode (default: general)'
     )
@@ -164,6 +178,24 @@ def setup_generate_parser(subparsers):
         type=int,
         default=10,
         help='Number of samples to generate (default: 10)'
+    )
+    
+    # Material generation options
+    generate_parser.add_argument(
+        '--material-path',
+        type=str,
+        help='Path to material files for material mode (supports wildcards like ./docs/*.txt)'
+    )
+    generate_parser.add_argument(
+        '--chunk-size',
+        type=int,
+        help='Size of text chunks for material processing'
+    )
+    generate_parser.add_argument(
+        '--n-samples-per-chunk',
+        type=int,
+        default=3,
+        help='Number of samples to generate per chunk (default: 3)'
     )
     
     # Pretraining specific options
@@ -204,9 +236,9 @@ def setup_generate_parser(subparsers):
     generate_parser.add_argument(
         '--backend',
         type=str,
-        choices=['hf', 'openai'],
-        default='hf',
-        help='Generation backend (default: hf for HuggingFace)'
+        choices=['huggingface', 'openai'],
+        default='openai',
+        help='Generation backend (default: openai)'
     )
     generate_parser.add_argument(
         '--model-name',
@@ -235,11 +267,36 @@ def setup_generate_parser(subparsers):
         help='Output file path (default: auto-generated based on params)'
     )
     generate_parser.add_argument(
+        '--output-dir',
+        type=str,
+        default='./outputs',
+        help='Output directory (default: ./outputs)'
+    )
+    generate_parser.add_argument(
         '--format',
         type=str,
         choices=['json', 'jsonl', 'txt'],
-        default='json',
-        help='Output format (default: json)'
+        default='jsonl',
+        help='Output format (default: jsonl)'
+    )
+    
+    # Batch generation options
+    generate_parser.add_argument(
+        '--use-batch',
+        action='store_true',
+        help='Use batch generation for better performance (OpenAI) or efficiency (HuggingFace)'
+    )
+    generate_parser.add_argument(
+        '--batch-size',
+        type=int,
+        default=32,
+        help='Batch size for HuggingFace batch processing (default: 32)'
+    )
+    generate_parser.add_argument(
+        '--batch-job-description',
+        type=str,
+        default='CLI batch generation',
+        help='Description for OpenAI batch jobs (default: CLI batch generation)'
     )
 
 
@@ -316,29 +373,38 @@ def run_translate(args):
     # Run translation
     try:
         if args.use_batch:
-            print("Using batch translation...")
-            result = translator.translate_dataset_batch(
-                dataset=dataset,
-                columns_to_translate=columns_to_translate,
-                output_path=args.output_path,
-                output_dir=args.output_dir,
-                batch_size=args.batch_size
-            )
+            print("Using batch translation for better performance...")
         else:
-            print("Using individual translation...")
-            result = translator.translate_dataset(
-                dataset=dataset,
-                columns_to_translate=columns_to_translate,
-                output_path=args.output_path,
-                output_dir=args.output_dir,
-                batch_size=args.batch_size
-            )
+            print("Using sequential translation...")
+            
+        result = translator.translate_dataset(
+            dataset=dataset,
+            columns_to_translate=columns_to_translate,
+            output_path=args.output_path,
+            output_dir=args.output_dir,
+            batch_size=args.batch_size,
+            use_batch=args.use_batch
+        )
         
         print("\n" + "="*50)
         print("TRANSLATION SUMMARY")
         print("="*50)
-        for key, value in result.items():
-            print(f"{key}: {value}")
+        
+        # Handle different result types (immediate results vs batch jobs)
+        if isinstance(result, dict) and 'batch_job' in result:
+            # This is an OpenAI batch job result
+            print("OpenAI batch job created successfully!")
+            print(f"Batch ID: {result['batch_id']}")
+            print(f"Status: {result['status']}")
+            print(f"Total requests: {result['total_requests']}")
+            print(f"Output will be saved to: {result['output_path']}")
+            print("\nNote: This is an asynchronous batch job.")
+            print("Use translator.retrieve_batch() to check status and get results when complete.")
+        else:
+            # This is immediate results
+            for key, value in result.items():
+                if key not in ['batch_job']:  # Don't print the actual batch job object
+                    print(f"{key}: {value}")
         
     except Exception as e:
         print(f"Translation failed: {e}")
@@ -350,15 +416,24 @@ def run_generate(args):
     print(f"Starting generation in {args.target_lang}")
     print(f"Mode: {args.mode}")
     print(f"Backend: {args.backend}")
+    if args.use_batch:
+        print("Using batch generation for better performance...")
+    
+    # Validate arguments based on mode
+    if args.mode == 'material' and not args.material_path:
+        print("Error: --material-path is required for material mode")
+        return
     
     # Initialize generator
-    if args.backend == 'openai':
-        generator = OpenAIGenerator(target_lang=args.target_lang)
-    else:  # hf
-        generator = HFGenerator(
-            target_lang=args.target_lang,
-            model_name=args.model_name
-        )
+    generator = LLMGenerator(
+        target_lang=args.target_lang,
+        backend=args.backend,
+        model_name=args.model_name
+    )
+    
+    # Determine if we should save to file
+    save_to_file = True  # Always save to file in CLI mode
+    output_dir = args.output_dir  # Use output directory from arguments
     
     # Generate data based on mode
     generated_data = []
@@ -369,83 +444,217 @@ def run_generate(args):
             if args.prompt:
                 print(f"Using prompt: {args.prompt}")
             
-            generated_texts = generator.generate(
-                prompt=args.prompt,
-                n_samples=args.n_samples,
-                temperature=args.temperature,
-                max_new_tokens=args.max_new_tokens
-            )
-            generated_data = [{"text": text, "prompt": args.prompt} for text in generated_texts]
+            if args.use_batch:
+                # Prepare prompts for batch generation
+                prompts = [args.prompt or ""] * args.n_samples
+                
+                if args.backend == "openai":
+                    # OpenAI batch generation
+                    batch_job = generator.generate_batch(
+                        prompts=prompts,
+                        batch_job_description=args.batch_job_description
+                    )
+                    
+                    print("\n" + "="*50)
+                    print("BATCH GENERATION SUMMARY")
+                    print("="*50)
+                    print("OpenAI batch job created successfully!")
+                    print(f"Batch ID: {batch_job.id}")
+                    print(f"Status: {batch_job.status}")
+                    print(f"Total requests: {len(prompts)}")
+                    print("\nNote: This is an asynchronous batch job.")
+                    print("Use generator.retrieve_batch() to check status and get results when complete.")
+                    return
+                
+                elif args.backend == "huggingface":
+                    # HuggingFace batch generation
+                    generated_texts = generator.generate_batch(
+                        prompts=prompts,
+                        batch_size=args.batch_size
+                    )
+                    generated_data = [{"text": text, "prompt": args.prompt} for text in generated_texts]
+            else:
+                # Regular generation
+                generated_texts = generator.generate(
+                    prompt=args.prompt,
+                    n_samples=args.n_samples,
+                    temperature=args.temperature,
+                    max_new_tokens=args.max_new_tokens
+                )
+                generated_data = [{"text": text, "prompt": args.prompt} for text in generated_texts]
+            
+            # Manual save for general mode (if not OpenAI batch)
+            if generated_data:
+                if args.output:
+                    output_path = args.output
+                else:
+                    os.makedirs(output_dir, exist_ok=True)
+                    batch_suffix = "_batch" if args.use_batch else ""
+                    filename = f"generated_general_{args.target_lang}_{args.backend}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    output_path = os.path.join(output_dir, filename)
+                
+                # Save data
+                if args.format == 'json':
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        json.dump(generated_data, f, ensure_ascii=False, indent=2)
+                elif args.format == 'jsonl':
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for item in generated_data:
+                            f.write(json.dumps(item, ensure_ascii=False) + '\n')
+                elif args.format == 'txt':
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for item in generated_data:
+                            if 'text' in item:
+                                f.write(item['text'] + '\n\n')
+                
+                print(f"Results saved to: {output_path}")
             
         elif args.mode == 'pretraining':
             print(f"Generating {args.n_samples} pretraining samples...")
             print(f"Domain: {args.domain}")
             print(f"Length range: {args.min_length}-{args.max_length}")
             
-            generated_texts = generator.generate_pretraining(
-                domain=args.domain,
-                n_samples=args.n_samples,
-                min_length=args.min_length,
-                max_length=args.max_length
-            )
-            generated_data = [{"text": text, "domain": args.domain, "mode": "pretraining"} for text in generated_texts]
+            if args.use_batch:
+                # For pretraining batch generation, create prompts based on domain/topics
+                if args.domain.lower() == "general":
+                    topics = generator.config.get("generation_settings.pretraining.general_topics_list", [])
+                    prompt_template = generator.config.get("generation_settings.pretraining.topic_prompt_template", "Write a short text about {topic}.")
+                    if topics:
+                        prompts = [prompt_template.format(topic=random.choice(topics)) for _ in range(args.n_samples)]
+                    else:
+                        prompts = [prompt_template.format(topic="general knowledge") for _ in range(args.n_samples)]
+                else:
+                    prompt_template = generator.config.get("generation_settings.pretraining.topic_prompt_template", "Write a short text about {topic}.")
+                    prompts = [prompt_template.format(topic=args.domain) for _ in range(args.n_samples)]
+                
+                if args.backend == "openai":
+                    # OpenAI batch generation for pretraining
+                    batch_job = generator.generate_batch(
+                        prompts=prompts,
+                        batch_job_description=f"{args.batch_job_description} - pretraining {args.domain}"
+                    )
+                    
+                    print("\n" + "="*50)
+                    print("BATCH GENERATION SUMMARY")
+                    print("="*50)
+                    print("OpenAI batch job created successfully!")
+                    print(f"Batch ID: {batch_job.id}")
+                    print(f"Status: {batch_job.status}")
+                    print(f"Total requests: {len(prompts)}")
+                    print("\nNote: This is an asynchronous batch job.")
+                    print("Use generator.retrieve_batch() to check status and get results when complete.")
+                    return
+                
+                elif args.backend == "huggingface":
+                    # HuggingFace batch generation for pretraining
+                    generated_texts = generator.generate_batch(
+                        prompts=prompts,
+                        batch_size=args.batch_size
+                    )
+                    
+                    # Save with the same format as regular pretraining
+                    if args.output:
+                        output_path = args.output
+                    else:
+                        os.makedirs(output_dir, exist_ok=True)
+                        batch_suffix = "_batch"
+                        filename = f"generated_pretraining_{args.domain}_{args.target_lang}_{args.backend}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+                        output_path = os.path.join(output_dir, filename)
+                    
+                    output_dirname = os.path.dirname(output_path)
+                    if output_dirname:
+                        os.makedirs(output_dirname, exist_ok=True)
+                    
+                    with open(output_path, 'w', encoding='utf-8') as f:
+                        for text in generated_texts:
+                            f.write(json.dumps({"text": text}, ensure_ascii=False) + '\n')
+                    
+                    print(f"Pretraining data saved to: {output_path}")
+                    generated_data = [{"text": text, "domain": args.domain, "mode": "pretraining"} for text in generated_texts]
+            else:
+                # Regular pretraining generation
+                generated_texts = generator.generate_pretraining(
+                    domain=args.domain,
+                    n_samples=args.n_samples,
+                    min_length=args.min_length,
+                    max_length=args.max_length,
+                    output_path=args.output,
+                    output_dir=output_dir,
+                    save_to_file=save_to_file
+                )
+                generated_data = [{"text": text, "domain": args.domain, "mode": "pretraining"} for text in generated_texts]
             
         elif args.mode == 'conversation':
             print(f"Generating {args.n_samples} conversations...")
             print(f"Domain: {args.domain}")
             print(f"Turns range: {args.n_turns_min}-{args.n_turns_max}")
             
+            if args.use_batch:
+                print("Note: Batch generation for conversations uses regular generation internally due to the multi-turn nature.")
+            
+            # Conversation generation doesn't benefit from batch processing due to its sequential nature
+            # Use regular conversation generation
             conversations = generator.generate_conversations(
                 domain=args.domain,
                 n_samples=args.n_samples,
                 n_turns_min=args.n_turns_min,
-                n_turns_max=args.n_turns_max
+                n_turns_max=args.n_turns_max,
+                output_path=args.output,
+                output_dir=output_dir,
+                save_to_file=save_to_file
             )
             generated_data = [{"conversation": conv, "domain": args.domain, "mode": "conversation"} for conv in conversations]
         
-        # Save generated data
-        if not args.output:
-            # Auto-generate output filename
-            output_filename = f"generated_{args.mode}_{args.target_lang}_{args.n_samples}samples"
-            if args.format == 'jsonl':
-                output_filename += '.jsonl'
-            elif args.format == 'txt':
-                output_filename += '.txt'
-            else:
-                output_filename += '.json'
-            args.output = output_filename
+        elif args.mode == 'material':
+            print(f"Generating samples from material...")
+            print(f"Material path: {args.material_path}")
+            if args.chunk_size:
+                print(f"Chunk size: {args.chunk_size}")
+            print(f"Samples per chunk: {args.n_samples_per_chunk}")
+            
+            if args.use_batch:
+                print("Note: Batch generation for material mode uses regular generation internally due to chunk-based processing.")
+            
+            # Use glob to expand wildcards in material path
+            import glob
+            material_paths = glob.glob(args.material_path)
+            if not material_paths:
+                raise ValueError(f"No files found matching pattern: {args.material_path}")
+            
+            # Material generation doesn't benefit from batch processing due to its chunk-based nature
+            # Use regular material generation
+            generated_samples = generator.generate_from_material(
+                material_paths=material_paths,
+                chunk_size=args.chunk_size,
+                n_samples_per_chunk=args.n_samples_per_chunk,
+                output_path=args.output,
+                output_dir=output_dir,
+                save_to_file=save_to_file
+            )
+            
+            # Convert the structured samples to the expected format for summary
+            generated_data = []
+            for sample in generated_samples:
+                generated_data.append({
+                    "text": sample["generated_text"],
+                    "source_file": sample["source_file_name"],
+                    "chunk_id": sample["chunk_id"],
+                    "mode": "material"
+                })
         
-        # Ensure output directory exists
-        output_path = Path(args.output)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Save data
-        if args.format == 'json':
-            with open(args.output, 'w', encoding='utf-8') as f:
-                json.dump(generated_data, f, ensure_ascii=False, indent=2)
-        elif args.format == 'jsonl':
-            with open(args.output, 'w', encoding='utf-8') as f:
-                for item in generated_data:
-                    f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        elif args.format == 'txt':
-            with open(args.output, 'w', encoding='utf-8') as f:
-                for item in generated_data:
-                    if 'text' in item:
-                        f.write(item['text'] + '\n\n')
-                    elif 'conversation' in item:
-                        f.write(str(item['conversation']) + '\n\n')
-        
-        print(f"\nGenerated {len(generated_data)} samples")
-        print(f"Saved to: {args.output}")
-        
-        # Show sample
+        # Only print summary if we have immediate results (not for OpenAI batch jobs)
         if generated_data:
+            print(f"\nGenerated {len(generated_data)} samples")
+            
+            # Show sample output
             print("\nSample output:")
             print("-" * 40)
             if 'text' in generated_data[0]:
-                print(generated_data[0]['text'][:200] + "..." if len(generated_data[0]['text']) > 200 else generated_data[0]['text'])
+                sample_text = generated_data[0]['text']
+                print(sample_text[:200] + "..." if len(sample_text) > 200 else sample_text)
             elif 'conversation' in generated_data[0]:
-                print(str(generated_data[0]['conversation'])[:200] + "..." if len(str(generated_data[0]['conversation'])) > 200 else str(generated_data[0]['conversation']))
+                sample_conv = str(generated_data[0]['conversation'])
+                print(sample_conv[:200] + "..." if len(sample_conv) > 200 else sample_conv)
                 
     except Exception as e:
         print(f"Generation failed: {e}")
