@@ -5,13 +5,14 @@ import json
 import tempfile
 import os
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 from typing import List, Union, Optional, Dict, Any
 
 class LLMTranslator(Translator):
     """Unified translator supporting both standard ML models (MarianMT) and LLM APIs (OpenAI)."""
     
-    def __init__(self, source_lang, target_lang, backend="marianmt", model_name=None):
+    def __init__(self, source_lang, target_lang, backend="marianmt", model_name=None, max_gen_tokens=1024):
         """
         Initialize unified translator.
         
@@ -24,6 +25,7 @@ class LLMTranslator(Translator):
         super().__init__(source_lang, target_lang)
         self.backend = backend
         self.model_name = model_name
+        self.max_gen_tokens = max_gen_tokens
 
         if self.backend == "marianmt":
             try:
@@ -73,7 +75,7 @@ class LLMTranslator(Translator):
                         {"role": "system", "content": f"You are a translator. Translate the following text from {self.source_lang} to {self.target_lang}."},
                         {"role": "user", "content": text}
                     ],
-                    max_tokens=1024,
+                    max_completion_tokens=self.max_gen_tokens,
                     temperature=0.4
                 )
                 translated_text = response.choices[0].message.content.strip()
@@ -137,7 +139,7 @@ class LLMTranslator(Translator):
                                         "content": text
                                     }
                                 ],
-                                "max_tokens": 1024,
+                                "max_completion_tokens": self.max_gen_tokens,
                                 "temperature": 0.4
                             }
                         }
@@ -222,7 +224,7 @@ class LLMTranslator(Translator):
 
     def translate_dataset(self, 
                          dataset, 
-                         columns_to_translate: Union[str, List[str]], 
+                         columns_to_translate: Union[str, List[str], None], 
                          output_path: Optional[str] = None,
                          output_dir: str = "./outputs",
                          batch_size: int = 1,
@@ -248,6 +250,16 @@ class LLMTranslator(Translator):
         # Ensure columns_to_translate is a list
         if isinstance(columns_to_translate, str):
             columns_to_translate = [columns_to_translate]
+        elif columns_to_translate is None:
+            # If no columns specified, automatically detect all available columns
+            if hasattr(dataset, 'columns') and dataset.columns:
+                all_columns = list(dataset.columns)
+                columns_to_translate = self._filter_translatable_columns(dataset, all_columns)
+                print(f"No columns specified, auto-detecting translatable columns: {columns_to_translate}")
+                if not columns_to_translate:
+                    raise ValueError("No translatable text columns found in dataset")
+            else:
+                raise ValueError("No columns specified and dataset has no detectable columns")
         
         # Validate columns exist in dataset
         if hasattr(dataset, 'columns') and dataset.columns:
@@ -258,7 +270,7 @@ class LLMTranslator(Translator):
         # Setup output path
         if output_path is None:
             os.makedirs(output_dir, exist_ok=True)
-            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}.jsonl"
+            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             output_path = os.path.join(output_dir, filename)
         else:
             # Ensure output directory exists
@@ -349,7 +361,7 @@ class LLMTranslator(Translator):
 
     def translate_dataset_batch(self, 
                                dataset, 
-                               columns_to_translate: Union[str, List[str]], 
+                               columns_to_translate: Union[str, List[str], None], 
                                output_path: Optional[str] = None,
                                output_dir: str = "./outputs",
                                batch_size: int = 32,
@@ -373,6 +385,16 @@ class LLMTranslator(Translator):
         # Ensure columns_to_translate is a list
         if isinstance(columns_to_translate, str):
             columns_to_translate = [columns_to_translate]
+        elif columns_to_translate is None:
+            # If no columns specified, automatically detect all available columns
+            if hasattr(dataset, 'columns') and dataset.columns:
+                all_columns = list(dataset.columns)
+                columns_to_translate = self._filter_translatable_columns(dataset, all_columns)
+                print(f"No columns specified, auto-detecting translatable columns: {columns_to_translate}")
+                if not columns_to_translate:
+                    raise ValueError("No translatable text columns found in dataset")
+            else:
+                raise ValueError("No columns specified and dataset has no detectable columns")
         
         # Validate columns exist in dataset
         if hasattr(dataset, 'columns') and dataset.columns:
@@ -383,7 +405,7 @@ class LLMTranslator(Translator):
         # Setup output path
         if output_path is None:
             os.makedirs(output_dir, exist_ok=True)
-            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}_batch.jsonl"
+            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             output_path = os.path.join(output_dir, filename)
         else:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)

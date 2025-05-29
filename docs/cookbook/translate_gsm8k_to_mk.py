@@ -31,16 +31,31 @@ def preprocess_dataset(dataset, columns_to_clean):
     """
     print(f"Preprocessing dataset to remove <<...>> patterns from columns: {columns_to_clean}")
     
-    # Get the underlying data
-    data = dataset.data
+    # Get the underlying data (list of dictionaries)
+    data = dataset._data
+    
+    if not data:
+        print("  Dataset is empty, nothing to preprocess")
+        return
+    
+    # Check if we have dictionary-based data
+    if not isinstance(data[0], dict):
+        print("  Warning: Dataset does not contain dictionary-based data, skipping preprocessing")
+        return
+    
+    # Get available columns from the first row
+    available_columns = list(data[0].keys())
     
     # Apply preprocessing to each specified column
     for column in columns_to_clean:
-        if column in data.columns:
+        if column in available_columns:
             print(f"  Cleaning column: {column}")
-            data[column] = data[column].apply(preprocess_text)
+            # Apply preprocessing to each row
+            for row in data:
+                if column in row:
+                    row[column] = preprocess_text(row[column])
         else:
-            print(f"  Warning: Column '{column}' not found in dataset")
+            print(f"  Warning: Column '{column}' not found in dataset. Available columns: {available_columns}")
     
     print("Preprocessing completed.")
 
@@ -55,7 +70,7 @@ def main():
             source_lang=source_lang, 
             target_lang=target_lang,
             backend="openai",
-            model_name="gpt-4.1-mini"  # You can change this to other models like "gpt-4" if needed
+            model_name="gpt-4.1-mini"  # You can change this to other models like "gpt-4o" if needed
         )
         print("OpenAI translator initialized successfully.")
     except Exception as e:
