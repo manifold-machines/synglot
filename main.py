@@ -145,7 +145,13 @@ def setup_translate_parser(subparsers):
         '--batch-request-limit',
         type=int,
         default=50000,
-        help='Maximum requests per OpenAI batch job (default: 40000). Only applies to OpenAI backend with --use-batch.'
+        help='Maximum requests per OpenAI batch job (default: 50000). Only applies to OpenAI backend with --use-batch.'
+    )
+    translate_parser.add_argument(
+        '--batch-token-limit',
+        type=int,
+        default=1900000,
+        help='Maximum tokens per OpenAI batch job (default: 1900000). Only applies to OpenAI backend with --use-batch.'
     )
     translate_parser.add_argument(
         '--max-samples',
@@ -396,7 +402,8 @@ def run_translate(args):
             output_dir=args.output_dir,
             batch_size=args.batch_size,
             use_batch=args.use_batch,
-            batch_request_limit=args.batch_request_limit
+            batch_request_limit=args.batch_request_limit,
+            batch_token_limit=args.batch_token_limit
         )
         
         print("\n" + "="*50)

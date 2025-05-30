@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 from typing import List, Union, Optional, Dict, Any
 from synglot.utils import retrieve_batch
 from tqdm import tqdm
+import tiktoken
 
 class LLMTranslator(Translator):
     """Unified translator supporting standard ML models (MarianMT), LLM APIs (OpenAI), and Google Translate API."""
@@ -53,6 +54,13 @@ class LLMTranslator(Translator):
             self.model_name = model_name if model_name else "gpt-4.1-mini"
             self.client = openai.OpenAI(api_key=self.api_key)
             self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
+            
+            # Initialize tokenizer for token counting
+            try:
+                self.encoding = tiktoken.encoding_for_model(self.model_name)
+            except KeyError:
+                # Fallback to cl100k_base for unknown models
+                self.encoding = tiktoken.get_encoding("cl100k_base")
         elif self.backend == "google":
             try:
                 from google.cloud import translate_v3
@@ -78,6 +86,28 @@ class LLMTranslator(Translator):
             raise NotImplementedError(
                 f"Backend '{self.backend}' is not supported. Currently supports 'marianmt', 'openai', and 'google'."
             )
+
+    def _num_tokens_consumed_from_request(self, request_json: dict) -> int:
+        """Count the number of tokens in a chat completion request."""
+        if self.backend != "openai":
+            return 0
+            
+        num_tokens = 0
+        messages = request_json.get("messages", [])
+        
+        for message in messages:
+            num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+            for key, value in message.items():
+                num_tokens += len(self.encoding.encode(str(value)))
+                if key == "name":  # if there's a name, the role is omitted
+                    num_tokens -= 1  # role is always required and always 1 token
+        num_tokens += 2  # every reply is primed with <im_start>assistant
+        
+        # Add completion tokens
+        max_completion_tokens = request_json.get("max_completion_tokens", self.max_gen_tokens)
+        num_tokens += max_completion_tokens
+        
+        return num_tokens
 
     def translate(self, text):
         """Translate using the configured backend (MarianMT, OpenAI, or Google Translate)."""
@@ -279,7 +309,8 @@ class LLMTranslator(Translator):
                          append_mode: bool = False,
                          use_batch: bool = False,
                          batch_job_description: str = "dataset translation",
-                         batch_request_limit: int = 50000) -> Dict[str, Any]:
+                         batch_request_limit: int = 50000,
+                         batch_token_limit: int = 1900000) -> Dict[str, Any]:
         """
         Translate specified columns in a dataset with comprehensive error handling and progress tracking.
         
@@ -295,6 +326,7 @@ class LLMTranslator(Translator):
             use_batch (bool): Whether to use batch processing for better performance
             batch_job_description (str): Description for batch jobs (OpenAI only)
             batch_request_limit (int): Maximum number of requests per batch for OpenAI backend
+            batch_token_limit (int): Maximum number of tokens per batch for OpenAI backend
             
         Returns:
             dict: Summary statistics including success/error counts and output path
@@ -352,17 +384,20 @@ class LLMTranslator(Translator):
         print(f"Translating columns: {columns_to_translate}")
         if use_batch:
             print(f"Batch size: {batch_size}")
+            if self.backend == "openai":
+                print(f"Request limit per batch: {batch_request_limit}")
+                print(f"Token limit per batch: {batch_token_limit:,}")
         print(f"Output will be saved to: {output_path}")
         
         if use_batch:
             return self._translate_dataset_batch_mode(dataset, columns_to_translate, output_path, 
-                                                    batch_size, batch_job_description, total_samples, batch_request_limit)
+                                                    batch_size, batch_job_description, total_samples, batch_request_limit, batch_token_limit)
         else:
             return self._translate_dataset_sequential_mode(dataset, columns_to_translate, output_path,
                                                          progress_interval, save_errors, append_mode, total_samples)
 
     def _translate_dataset_batch_mode(self, dataset, columns_to_translate, output_path, 
-                                    batch_size, batch_job_description, total_samples, batch_request_limit=40000):
+                                    batch_size, batch_job_description, total_samples, batch_request_limit=40000, batch_token_limit=1900000):
         """Handle batch mode translation for datasets."""
         if self.backend == "openai":
             # OpenAI batch processing creates batch jobs for each column
@@ -374,7 +409,7 @@ class LLMTranslator(Translator):
             
             all_texts_with_metadata = []
             
-            # Collect all texts from all columns with metadata
+            # Collect all texts from all columns with metadata and calculate tokens
             request_id = 0
             for column in columns_to_translate:
                 print(f"Preparing batch requests for column: {column}")
@@ -382,11 +417,32 @@ class LLMTranslator(Translator):
                 for i, item in enumerate(dataset_list):
                     text = item.get(column) if isinstance(item, dict) else str(item)
                     if text is not None and str(text).strip():
+                        # Create request to calculate token consumption
+                        request_json = {
+                            "model": self.model_name,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
+                                },
+                                {
+                                    "role": "user",
+                                    "content": str(text)
+                                }
+                            ],
+                            "max_completion_tokens": self.max_gen_tokens,
+                            "temperature": 0.4
+                        }
+                        
+                        token_count = self._num_tokens_consumed_from_request(request_json)
+                        
                         all_texts_with_metadata.append({
                             "text": str(text),
                             "column": column,
                             "sample_index": i,
-                            "request_id": request_id
+                            "request_id": request_id,
+                            "token_count": token_count,
+                            "request_json": request_json
                         })
                         request_id += 1
             
@@ -394,44 +450,50 @@ class LLMTranslator(Translator):
                 raise ValueError("No valid texts found for translation")
             
             total_requests = len(all_texts_with_metadata)
+            total_tokens = sum(item["token_count"] for item in all_texts_with_metadata)
             print(f"Total translation requests: {total_requests}")
+            print(f"Total estimated tokens: {total_tokens:,}")
             
-            # Use configurable batch request limit
-            if total_requests <= batch_request_limit:
+            # Determine if we need to split based on either limit
+            needs_split = total_requests > batch_request_limit or total_tokens > batch_token_limit
+            
+            if not needs_split:
                 # Single batch job
-                print(f"Creating single batch job with {total_requests} translation requests...")
-                batch_job = self._create_single_batch_job(all_texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples)
+                print(f"Creating single batch job with {total_requests} requests and {total_tokens:,} tokens...")
+                batch_job = self._create_single_batch_job_with_tokens(all_texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples)
                 return batch_job
             else:
-                # Multiple batch jobs needed
-                num_batches = (total_requests + batch_request_limit - 1) // batch_request_limit
-                print(f"Total requests ({total_requests}) exceeds OpenAI limit ({batch_request_limit})")
-                print(f"Splitting into {num_batches} batch jobs...")
+                # Multiple batch jobs needed - split respecting both limits
+                print(f"Splitting into multiple batches due to limits:")
+                print(f"  Request limit: {batch_request_limit}")
+                print(f"  Token limit: {batch_token_limit:,}")
+                
+                batches = self._split_requests_by_limits(all_texts_with_metadata, batch_request_limit, batch_token_limit)
+                
+                print(f"Created {len(batches)} batches")
                 
                 batch_jobs = []
-                for i in range(num_batches):
-                    start_idx = i * batch_request_limit
-                    end_idx = min((i + 1) * batch_request_limit, total_requests)
-                    batch_chunk = all_texts_with_metadata[start_idx:end_idx]
-                    
-                    chunk_description = f"{batch_job_description} - batch {i+1}/{num_batches}"
-                    print(f"Creating batch {i+1}/{num_batches} with {len(batch_chunk)} requests...")
+                for i, batch_chunk in enumerate(batches):
+                    chunk_tokens = sum(item["token_count"] for item in batch_chunk)
+                    chunk_description = f"{batch_job_description} - batch {i+1}/{len(batches)}"
+                    print(f"Creating batch {i+1}/{len(batches)} with {len(batch_chunk)} requests and {chunk_tokens:,} tokens...")
                     
                     # Modify output path for each batch
                     base_path, ext = os.path.splitext(output_path)
                     chunk_output_path = f"{base_path}_batch_{i+1}{ext}"
                     
-                    batch_job = self._create_single_batch_job(batch_chunk, chunk_description, chunk_output_path, columns_to_translate, total_samples)
+                    batch_job = self._create_single_batch_job_with_tokens(batch_chunk, chunk_description, chunk_output_path, columns_to_translate, total_samples)
                     batch_jobs.append(batch_job)
                 
-                print(f"All {num_batches} batch jobs created successfully!")
+                print(f"All {len(batches)} batch jobs created successfully!")
                 print("Each batch will need to be retrieved separately using retrieve_batch()")
                 
                 return {
                     "multiple_batches": True,
                     "batch_jobs": batch_jobs,
-                    "total_batches": num_batches,
+                    "total_batches": len(batches),
                     "total_requests": total_requests,
+                    "total_tokens": total_tokens,
                     "columns_translated": columns_to_translate,
                     "source_language": self.source_lang,
                     "target_language": self.target_lang,
@@ -528,8 +590,40 @@ class LLMTranslator(Translator):
             
             return summary
 
-    def _create_single_batch_job(self, texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples):
-        """Create a single OpenAI batch job from a list of texts with metadata."""
+    def _split_requests_by_limits(self, requests_with_metadata, request_limit, token_limit):
+        """Split requests into batches respecting both request and token limits."""
+        batches = []
+        current_batch = []
+        current_request_count = 0
+        current_token_count = 0
+        
+        for request in requests_with_metadata:
+            request_tokens = request["token_count"]
+            
+            # Check if adding this request would exceed either limit
+            would_exceed_requests = current_request_count + 1 > request_limit
+            would_exceed_tokens = current_token_count + request_tokens > token_limit
+            
+            if (would_exceed_requests or would_exceed_tokens) and current_batch:
+                # Start a new batch
+                batches.append(current_batch)
+                current_batch = []
+                current_request_count = 0
+                current_token_count = 0
+            
+            # Add request to current batch
+            current_batch.append(request)
+            current_request_count += 1
+            current_token_count += request_tokens
+        
+        # Add the last batch if it has any requests
+        if current_batch:
+            batches.append(current_batch)
+        
+        return batches
+
+    def _create_single_batch_job_with_tokens(self, texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples):
+        """Create a single OpenAI batch job from a list of texts with metadata and token counts."""
         temp_file_path = None
         try:
             with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as batchfile:
@@ -539,21 +633,7 @@ class LLMTranslator(Translator):
                         "custom_id": f"req-{item['request_id']}-{item['column']}-{item['sample_index']}",
                         "method": "POST", 
                         "url": "/v1/chat/completions",
-                        "body": {
-                            "model": self.model_name,
-                            "messages": [
-                                {
-                                    "role": "system",
-                                    "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
-                                },
-                                {
-                                    "role": "user",
-                                    "content": item["text"]
-                                }
-                            ],
-                            "max_completion_tokens": self.max_gen_tokens,
-                            "temperature": 0.4
-                        }
+                        "body": item["request_json"]
                     }
                     batchfile.write(json.dumps(request) + '\n')
                 
@@ -568,12 +648,13 @@ class LLMTranslator(Translator):
 
             # Create batch
             batch_input_file_id = batch_input_file.id
+            total_tokens = sum(item["token_count"] for item in texts_with_metadata)
             created_batch = self.client.batches.create(
                 input_file_id=batch_input_file_id,
                 endpoint="/v1/chat/completions",
                 completion_window="24h",
                 metadata={
-                    "description": f"{batch_job_description} - {len(texts_with_metadata)} translations"
+                    "description": f"{batch_job_description} - {len(texts_with_metadata)} translations, ~{total_tokens:,} tokens"
                 }
             )
 
@@ -581,11 +662,13 @@ class LLMTranslator(Translator):
             print(f"Batch ID: {created_batch.id}")
             print(f"Status: {created_batch.status}")
             print(f"Total requests: {len(texts_with_metadata)}")
+            print(f"Estimated tokens: {total_tokens:,}")
             
             return {
                 "batch_job": created_batch,
                 "batch_id": created_batch.id,
                 "total_requests": len(texts_with_metadata),
+                "total_tokens": total_tokens,
                 "columns_translated": columns_to_translate,
                 "source_language": self.source_lang,
                 "target_language": self.target_lang,
