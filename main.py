@@ -12,6 +12,12 @@ python main.py translate --hf-dataset wmt16 --target-lang mk --source-lang en --
 # Use batch translation for better performance
 python main.py translate --hf-dataset wmt16 --target-lang mk --source-lang en --backend openai --use-batch --batch-size 50
 
+# For large datasets exceeding 50,000 requests, the system automatically splits into multiple batch jobs
+python main.py translate --hf-dataset opus100 --target-lang fr --source-lang en --backend openai --use-batch
+
+# Customize the batch request limit (useful if OpenAI changes their limits)
+python main.py translate --hf-dataset large_dataset --target-lang es --source-lang en --backend openai --use-batch --batch-request-limit 30000
+
 Generation:
   
 # Generate pretraining data
@@ -134,6 +140,12 @@ def setup_translate_parser(subparsers):
         '--use-batch',
         action='store_true',
         help='Use batch translation for better performance'
+    )
+    translate_parser.add_argument(
+        '--batch-request-limit',
+        type=int,
+        default=50000,
+        help='Maximum requests per OpenAI batch job (default: 40000). Only applies to OpenAI backend with --use-batch.'
     )
     translate_parser.add_argument(
         '--max-samples',
@@ -383,7 +395,8 @@ def run_translate(args):
             output_path=args.output_path,
             output_dir=args.output_dir,
             batch_size=args.batch_size,
-            use_batch=args.use_batch
+            use_batch=args.use_batch,
+            batch_request_limit=args.batch_request_limit
         )
         
         print("\n" + "="*50)
@@ -400,6 +413,19 @@ def run_translate(args):
             print(f"Output will be saved to: {result['output_path']}")
             print("\nNote: This is an asynchronous batch job.")
             print("Use translator.retrieve_batch() to check status and get results when complete.")
+        elif isinstance(result, dict) and 'multiple_batches' in result:
+            # This is multiple OpenAI batch jobs result
+            print("Multiple OpenAI batch jobs created successfully!")
+            print(f"Total batches created: {result['total_batches']}")
+            print(f"Total requests: {result['total_requests']}")
+            print(f"Each batch respects OpenAI's 40,000 request limit")
+            print("\nBatch details:")
+            for i, batch_job in enumerate(result['batch_jobs'], 1):
+                print(f"  Batch {i}: ID {batch_job['batch_id']}, {batch_job['total_requests']} requests")
+                print(f"    Output: {batch_job['output_path']}")
+            print("\nNote: These are asynchronous batch jobs.")
+            print("Use translator.retrieve_batch() with each batch_job individually to get results when complete.")
+            print("You can access individual batch jobs via result['batch_jobs'][index]")
         else:
             # This is immediate results
             for key, value in result.items():

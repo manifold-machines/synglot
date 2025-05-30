@@ -50,7 +50,7 @@ class LLMTranslator(Translator):
             if not self.api_key:
                 raise ValueError("OPENAI_API_KEY environment variable is required for OpenAI backend.")
             
-            self.model_name = model_name if model_name else "gpt-4o-mini"
+            self.model_name = model_name if model_name else "gpt-4.1-mini"
             self.client = openai.OpenAI(api_key=self.api_key)
             self.async_client = openai.AsyncOpenAI(api_key=self.api_key)
         elif self.backend == "google":
@@ -278,7 +278,8 @@ class LLMTranslator(Translator):
                          save_errors: bool = True,
                          append_mode: bool = False,
                          use_batch: bool = False,
-                         batch_job_description: str = "dataset translation") -> Dict[str, Any]:
+                         batch_job_description: str = "dataset translation",
+                         batch_request_limit: int = 50000) -> Dict[str, Any]:
         """
         Translate specified columns in a dataset with comprehensive error handling and progress tracking.
         
@@ -293,6 +294,7 @@ class LLMTranslator(Translator):
             append_mode (bool): Whether to append to existing file or overwrite (used in non-batch mode)
             use_batch (bool): Whether to use batch processing for better performance
             batch_job_description (str): Description for batch jobs (OpenAI only)
+            batch_request_limit (int): Maximum number of requests per batch for OpenAI backend
             
         Returns:
             dict: Summary statistics including success/error counts and output path
@@ -354,13 +356,13 @@ class LLMTranslator(Translator):
         
         if use_batch:
             return self._translate_dataset_batch_mode(dataset, columns_to_translate, output_path, 
-                                                    batch_size, batch_job_description, total_samples)
+                                                    batch_size, batch_job_description, total_samples, batch_request_limit)
         else:
             return self._translate_dataset_sequential_mode(dataset, columns_to_translate, output_path,
                                                          progress_interval, save_errors, append_mode, total_samples)
 
     def _translate_dataset_batch_mode(self, dataset, columns_to_translate, output_path, 
-                                    batch_size, batch_job_description, total_samples):
+                                    batch_size, batch_job_description, total_samples, batch_request_limit=40000):
         """Handle batch mode translation for datasets."""
         if self.backend == "openai":
             # OpenAI batch processing creates batch jobs for each column
@@ -391,85 +393,55 @@ class LLMTranslator(Translator):
             if not all_texts_with_metadata:
                 raise ValueError("No valid texts found for translation")
             
-            print(f"Creating batch job with {len(all_texts_with_metadata)} translation requests...")
+            total_requests = len(all_texts_with_metadata)
+            print(f"Total translation requests: {total_requests}")
             
-            # Create batch file
-            temp_file_path = None
-            try:
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as batchfile:
-                    temp_file_path = batchfile.name
-                    for item in all_texts_with_metadata:
-                        request = {
-                            "custom_id": f"req-{item['request_id']}-{item['column']}-{item['sample_index']}",
-                            "method": "POST", 
-                            "url": "/v1/chat/completions",
-                            "body": {
-                                "model": self.model_name,
-                                "messages": [
-                                    {
-                                        "role": "system",
-                                        "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": item["text"]
-                                    }
-                                ],
-                                "max_completion_tokens": self.max_gen_tokens,
-                                "temperature": 0.4
-                            }
-                        }
-                        batchfile.write(json.dumps(request) + '\n')
-                    
-                    batchfile.flush()
+            # Use configurable batch request limit
+            if total_requests <= batch_request_limit:
+                # Single batch job
+                print(f"Creating single batch job with {total_requests} translation requests...")
+                batch_job = self._create_single_batch_job(all_texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples)
+                return batch_job
+            else:
+                # Multiple batch jobs needed
+                num_batches = (total_requests + batch_request_limit - 1) // batch_request_limit
+                print(f"Total requests ({total_requests}) exceeds OpenAI limit ({batch_request_limit})")
+                print(f"Splitting into {num_batches} batch jobs...")
                 
-                # Upload file to OpenAI
-                with open(temp_file_path, "rb") as file_to_upload:
-                    batch_input_file = self.client.files.create(
-                        file=file_to_upload,
-                        purpose="batch"
-                    )
-
-                # Create batch
-                batch_input_file_id = batch_input_file.id
-                created_batch = self.client.batches.create(
-                    input_file_id=batch_input_file_id,
-                    endpoint="/v1/chat/completions",
-                    completion_window="24h",
-                    metadata={
-                        "description": f"{batch_job_description} - {len(all_texts_with_metadata)} translations"
-                    }
-                )
-
-                print(f"Batch job created successfully!")
-                print(f"Batch ID: {created_batch.id}")
-                print(f"Status: {created_batch.status}")
-                print(f"Total requests: {len(all_texts_with_metadata)}")
+                batch_jobs = []
+                for i in range(num_batches):
+                    start_idx = i * batch_request_limit
+                    end_idx = min((i + 1) * batch_request_limit, total_requests)
+                    batch_chunk = all_texts_with_metadata[start_idx:end_idx]
+                    
+                    chunk_description = f"{batch_job_description} - batch {i+1}/{num_batches}"
+                    print(f"Creating batch {i+1}/{num_batches} with {len(batch_chunk)} requests...")
+                    
+                    # Modify output path for each batch
+                    base_path, ext = os.path.splitext(output_path)
+                    chunk_output_path = f"{base_path}_batch_{i+1}{ext}"
+                    
+                    batch_job = self._create_single_batch_job(batch_chunk, chunk_description, chunk_output_path, columns_to_translate, total_samples)
+                    batch_jobs.append(batch_job)
+                
+                print(f"All {num_batches} batch jobs created successfully!")
+                print("Each batch will need to be retrieved separately using retrieve_batch()")
                 
                 return {
-                    "batch_job": created_batch,
-                    "batch_id": created_batch.id,
-                    "total_requests": len(all_texts_with_metadata),
+                    "multiple_batches": True,
+                    "batch_jobs": batch_jobs,
+                    "total_batches": num_batches,
+                    "total_requests": total_requests,
                     "columns_translated": columns_to_translate,
                     "source_language": self.source_lang,
                     "target_language": self.target_lang,
                     "backend": self.backend,
-                    "output_path": output_path,
+                    "output_paths": [job["output_path"] for job in batch_jobs],
                     "dataset_size": total_samples,
-                    "status": "batch_submitted",
-                    "instructions": "Use retrieve_batch() with the batch_job to get results when complete"
+                    "status": "batches_submitted",
+                    "instructions": "Use retrieve_batch() with each batch_job individually to get results when complete. Results will be saved to separate files."
                 }
                 
-            except Exception as e:
-                raise RuntimeError(f"OpenAI batch creation failed: {e}")
-            finally:
-                # Clean up temporary file
-                if temp_file_path and os.path.exists(temp_file_path):
-                    try:
-                        os.unlink(temp_file_path)
-                    except OSError as e:
-                        logging.warning(f"Failed to clean up temporary file {temp_file_path}: {e}")
-        
         else:
             # MarianMT and Google Translate batch processing - synchronous
             print(f"Using {self.backend} batch processing...")
@@ -555,6 +527,84 @@ class LLMTranslator(Translator):
             print(f"Output saved to: {output_path}")
             
             return summary
+
+    def _create_single_batch_job(self, texts_with_metadata, batch_job_description, output_path, columns_to_translate, total_samples):
+        """Create a single OpenAI batch job from a list of texts with metadata."""
+        temp_file_path = None
+        try:
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as batchfile:
+                temp_file_path = batchfile.name
+                for item in texts_with_metadata:
+                    request = {
+                        "custom_id": f"req-{item['request_id']}-{item['column']}-{item['sample_index']}",
+                        "method": "POST", 
+                        "url": "/v1/chat/completions",
+                        "body": {
+                            "model": self.model_name,
+                            "messages": [
+                                {
+                                    "role": "system",
+                                    "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
+                                },
+                                {
+                                    "role": "user",
+                                    "content": item["text"]
+                                }
+                            ],
+                            "max_completion_tokens": self.max_gen_tokens,
+                            "temperature": 0.4
+                        }
+                    }
+                    batchfile.write(json.dumps(request) + '\n')
+                
+                batchfile.flush()
+            
+            # Upload file to OpenAI
+            with open(temp_file_path, "rb") as file_to_upload:
+                batch_input_file = self.client.files.create(
+                    file=file_to_upload,
+                    purpose="batch"
+                )
+
+            # Create batch
+            batch_input_file_id = batch_input_file.id
+            created_batch = self.client.batches.create(
+                input_file_id=batch_input_file_id,
+                endpoint="/v1/chat/completions",
+                completion_window="24h",
+                metadata={
+                    "description": f"{batch_job_description} - {len(texts_with_metadata)} translations"
+                }
+            )
+
+            print(f"Batch job created successfully!")
+            print(f"Batch ID: {created_batch.id}")
+            print(f"Status: {created_batch.status}")
+            print(f"Total requests: {len(texts_with_metadata)}")
+            
+            return {
+                "batch_job": created_batch,
+                "batch_id": created_batch.id,
+                "total_requests": len(texts_with_metadata),
+                "columns_translated": columns_to_translate,
+                "source_language": self.source_lang,
+                "target_language": self.target_lang,
+                "backend": self.backend,
+                "output_path": output_path,
+                "dataset_size": total_samples,
+                "status": "batch_submitted",
+                "instructions": "Use retrieve_batch() with the batch_job to get results when complete"
+            }
+            
+        except Exception as e:
+            raise RuntimeError(f"OpenAI batch creation failed: {e}")
+        finally:
+            # Clean up temporary file
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                except OSError as e:
+                    logging.warning(f"Failed to clean up temporary file {temp_file_path}: {e}")
 
     def _translate_dataset_sequential_mode(self, dataset, columns_to_translate, output_path,
                                          progress_interval, save_errors, append_mode, total_samples):
