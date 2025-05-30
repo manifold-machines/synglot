@@ -12,7 +12,7 @@ api_key = os.getenv("MISTRAL_API_KEY")
 client = Mistral(api_key=api_key)
 
 
-def create_unique_output_dir(pdf_url):
+def create_unique_output_dir(pdf_url, base_dir='./ocr_outputs'):
     """
     Create a unique output directory for the PDF processing.
     Returns the directory path.
@@ -27,7 +27,7 @@ def create_unique_output_dir(pdf_url):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     dir_name = f"{cleaned_url}_{timestamp}"
     
-    output_dir = os.path.join("ocr_outputs", dir_name)
+    output_dir = os.path.join(base_dir, dir_name)
     
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
