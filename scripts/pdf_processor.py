@@ -25,6 +25,8 @@ Directory structure:
 
 import sys
 import os
+import json
+import tiktoken
 from mistralai import Mistral
 from dotenv import load_dotenv
 
@@ -35,9 +37,9 @@ load_dotenv()
 
 def main():
     if len(sys.argv) != 3:
-        print("Usage: python pdf_processor.py <run_name> <url>")
+        print("Usage: python scripts/pdf_processor.py <run_name> <url>")
         print("\nExample:")
-        print('  python pdf_processor.py "research_batch_1" "https://arxiv.org/abs/2310.06825"')
+        print('  python scripts/pdf_processor.py "research_batch_1" "https://arxiv.org/abs/2310.06825"')
         sys.exit(1)
     
     run_name = sys.argv[1]
@@ -62,6 +64,15 @@ def main():
         print(f"🔥 Failed to initialize Mistral client: {e}")
         sys.exit(1)
     
+    # Initialize tokenizer for counting tokens
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        print("🔤 Tokenizer initialized successfully.")
+    except Exception as e:
+        print(f"🔥 Failed to initialize tokenizer: {e}")
+        # Continue without token counting
+        encoding = None
+    
     # Create run directory
     if not os.path.exists(run_name):
         os.makedirs(run_name)
@@ -79,6 +90,9 @@ def main():
     for i, pdf_url in enumerate(pdf_links):
         print(f"  {i + 1}. {pdf_url}")
     
+    # Create a json file with summary statistics
+    summary_stats = {}
+
     # Process each PDF
     successful_ocr = 0
     for i, pdf_url in enumerate(pdf_links):
@@ -89,13 +103,30 @@ def main():
         print(f"📁 Created PDF directory: {pdf_output_dir}")
         
         # Run OCR on the PDF
-        markdown_content = ocr_pdf_with_mistral(pdf_url, pdf_output_dir, client)
+        markdown_content, image_paths = ocr_pdf_with_mistral(pdf_url, pdf_output_dir, client)
+
+        # Count tokens in markdown content
+        num_tokens = 0
+        if markdown_content and encoding:
+            num_tokens = len(encoding.encode(str(markdown_content)))
+
+        summary_stats[pdf_url] = {
+            "successful_ocr": markdown_content is not None,
+            "failed_ocr": markdown_content is None,
+            "total_images": len(image_paths),
+            "number_of_characters": len(markdown_content) if markdown_content else 0,
+            "number_of_tokens": num_tokens
+        }
         
         if markdown_content:
             successful_ocr += 1
             print(f"👍 Successfully processed PDF {i + 1}")
         else:
             print(f"👎 Failed to process PDF {i + 1}")
+    
+    # Save summary statistics to a json file
+    with open(os.path.join(run_name, "summary_stats.json"), "w") as f:
+        json.dump(summary_stats, f, indent=4)
     
     # Summary
     print(f"\n🏁 Processing complete!")

@@ -315,10 +315,10 @@ def ocr_pdf_with_mistral(pdf_url, output_dir, client):
             print(f"✅ Processed {len(all_image_paths)} total image(s) across all pages.")
             print(f"✅ Results saved to: {output_dir}")
             
-            return complete_markdown
+            return complete_markdown, all_image_paths
         else:
             print("⚠️ No pages found in OCR response")
-            return ""
+            return "", {}
             
     except Exception as e:
         print(f"❌ Error processing PDF: {e}")
