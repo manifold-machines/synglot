@@ -42,9 +42,11 @@ dependencies = [
     # API integrations
     "openai>=1.0.0",
     "python-dotenv>=0.19.0",
+    "mistralai",
     
     # Utilities
-    "pathlib2>=2.3.6; python_version<'3.4'",
+    "pathlib2>=2.3.6",
+    #"python_version<'3.4'",
 ]
 
 [project.optional-dependencies]
