@@ -29,6 +29,7 @@ import json
 import tiktoken
 from mistralai import Mistral
 from dotenv import load_dotenv
+from tqdm import tqdm
 
 # Import functions from the merged ocr_utils module
 from ocr_utils import find_pdf_links_on_page, ocr_pdf_with_mistral, create_pdf_output_dir
@@ -95,7 +96,7 @@ def main():
 
     # Process each PDF
     successful_ocr = 0
-    for i, pdf_url in enumerate(pdf_links):
+    for i, pdf_url in tqdm(enumerate(pdf_links), total=len(pdf_links), desc="Processing PDFs"):
         print(f"\n🔄 Processing PDF {i + 1}/{len(pdf_links)}: {pdf_url}")
         
         # Create output directory for this PDF

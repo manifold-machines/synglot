@@ -34,10 +34,13 @@ dependencies = [
     "pandas>=1.3.0",
     "PyYAML>=6.0",
     "tqdm>=4.62.0",
+    "beautifulsoup4==4.13.4",
+    "bs4==0.0.2",
     
     # NLP tools
     "sacremoses>=0.0.53",
     "sentencepiece>=0.1.96",
+    "tiktoken==0.9.0",
     
     # API integrations
     "openai>=1.0.0",
