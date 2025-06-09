@@ -14,6 +14,9 @@ class Config:
             "default_top_k": 50,
             "default_top_p": 1.0,
             "default_do_sample": True,
+            # Note: max_gen_tokens is the primary parameter for both backends (passed to constructor)
+            # default_max_new_tokens is used as a fallback only when max_gen_tokens is not set and 
+            # max_new_tokens is explicitly requested (HuggingFace-specific override)
             "default_max_new_tokens": 150, # Increased default
             "return_full_text": True,      # General default for the 'generate' method
 

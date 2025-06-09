@@ -211,7 +211,7 @@ def ocr_pdf_with_mistral_custom(pdf_url, output_dir, client):
     Modified version of OCR function that saves to a specified directory.
     Based on mistral_ocr from ocr_pdf.py but with custom output directory.
     """
-    print(f"\n📄 Processing PDF with Mistral OCR: {pdf_url}")
+    print(f"\nProcessing PDF with Mistral OCR: {pdf_url}")
     try:
         ocr_response = client.ocr.process(
             model="mistral-ocr-latest",
@@ -226,7 +226,7 @@ def ocr_pdf_with_mistral_custom(pdf_url, output_dir, client):
         all_image_paths = {}
         
         if hasattr(ocr_response, 'pages') and ocr_response.pages:
-            print(f"✅ Successfully received OCR response with {len(ocr_response.pages)} page(s).")
+            print(f"Successfully received OCR response with {len(ocr_response.pages)} page(s).")
             
             for i, page in enumerate(ocr_response.pages):
                 # Extract and save images from this page
@@ -245,14 +245,14 @@ def ocr_pdf_with_mistral_custom(pdf_url, output_dir, client):
                 f.write(f"# OCR Result from: {pdf_url}\n\n")
                 f.write(complete_markdown)
             
-            print(f"✅ Processed {len(all_image_paths)} total image(s) across all pages.")
-            print(f"✅ Results saved to: {output_dir}")
+            print(f"Processed {len(all_image_paths)} total image(s) across all pages.")
+            print(f"Results saved to: {output_dir}")
             
             return complete_markdown
         else:
-            print("⚠️ No pages found in OCR response")
+            print("No pages found in OCR response")
             return ""
             
     except Exception as e:
-        print(f"❌ Error processing PDF: {e}")
+        print(f"Error processing PDF: {e}")
         return ""

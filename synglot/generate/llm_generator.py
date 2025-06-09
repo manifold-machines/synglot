@@ -15,22 +15,49 @@ from synglot.utils import retrieve_batch, load_material_files, chunk_text, filte
 class LLMGenerator(Generator):
     """Unified generator supporting HuggingFace models and OpenAI API."""
     
-    def __init__(self, target_lang, backend="huggingface", model_name=None, config=None, api_key=None, max_gen_tokens=1024):
+    def __init__(self, target_lang, backend="huggingface", model_name=None, config=None, api_key=None, 
+                 max_gen_tokens=1024, temperature=None, top_k=None, top_p=None, do_sample=None, 
+                 max_new_tokens=None, min_length=None, return_full_text=None, seed=None):
         """
-        Initialize unified LLM generator.
+        Initialize unified LLM generator with direct parameter access.
         
         Args:
             target_lang (str): Target language code
-            backend (str): Backend system. Supports 'huggingface' or 'openai'.
+            backend (str): Backend system. Supports 'huggingface' or 'openai'. Default: 'huggingface'
             model_name (str, optional): Model name. For HF: model identifier; For OpenAI: model name (e.g., 'gpt-4o')
-            config (Config | dict, optional): Configuration object or dictionary
+            config (Config | dict, optional): Configuration object or dictionary (fallback for advanced settings)
             api_key (str, optional): API key for OpenAI backend
-            max_gen_tokens (int): Maximum tokens for generation (used by OpenAI backend)
+            max_gen_tokens (int): Maximum tokens for generation (primary parameter for both backends). Default: 1024
+            
+            # Direct generation parameters (override config if specified):
+            temperature (float, optional): Sampling temperature (0.0 to 2.0). Default: 1.0 for HF, 0.7 for OpenAI
+            top_k (int, optional): Top-k sampling parameter (HF only). Default: 50
+            top_p (float, optional): Top-p (nucleus) sampling parameter. Default: 1.0
+            do_sample (bool, optional): Whether to use sampling (HF only). Default: True
+            max_new_tokens (int, optional): Override max_gen_tokens for HuggingFace backend only. Default: None (uses max_gen_tokens)
+            min_length (int, optional): Minimum total length (HF only). Default: None
+            return_full_text (bool, optional): Whether to return full text including prompt (HF only). Default: True
+            seed (int, optional): Random seed for reproducible generation. Default: None
         """
         super().__init__(target_lang, config)
         self.backend = backend
         self.model_name = model_name
         self.max_gen_tokens = max_gen_tokens
+        
+        # Store direct parameters with priority over config
+        self.direct_params = {
+            'temperature': temperature,
+            'top_k': top_k, 
+            'top_p': top_p,
+            'do_sample': do_sample,
+            'max_new_tokens': max_new_tokens,
+            'min_length': min_length,
+            'return_full_text': return_full_text,
+            'seed': seed
+        }
+        
+        # Validate parameters to make config foolproof
+        self._validate_parameters()
         
         if self.backend == "huggingface":
             self._init_huggingface()
@@ -40,6 +67,53 @@ class LLMGenerator(Generator):
             raise NotImplementedError(
                 f"Backend '{self.backend}' is not supported. Currently supports 'huggingface' and 'openai'."
             )
+    
+    def _validate_parameters(self):
+        """Validate parameters to provide helpful error messages."""
+        # Temperature validation
+        temp = self.direct_params.get('temperature')
+        if temp is not None:
+            if not isinstance(temp, (int, float)) or temp < 0 or temp > 2.0:
+                raise ValueError(f"Temperature must be a number between 0 and 2.0, got {temp}")
+        
+        # Top-k validation  
+        top_k = self.direct_params.get('top_k')
+        if top_k is not None:
+            if not isinstance(top_k, int) or top_k < 1:
+                raise ValueError(f"top_k must be a positive integer, got {top_k}")
+        
+        # Top-p validation
+        top_p = self.direct_params.get('top_p')
+        if top_p is not None:
+            if not isinstance(top_p, (int, float)) or top_p < 0 or top_p > 1.0:
+                raise ValueError(f"top_p must be a number between 0 and 1.0, got {top_p}")
+        
+        # Token length validation
+        max_new_tokens = self.direct_params.get('max_new_tokens')
+        if max_new_tokens is not None:
+            if not isinstance(max_new_tokens, int) or max_new_tokens < 1:
+                raise ValueError(f"max_new_tokens must be a positive integer, got {max_new_tokens}")
+        
+        min_length = self.direct_params.get('min_length')
+        if min_length is not None:
+            if not isinstance(min_length, int) or min_length < 1:
+                raise ValueError(f"min_length must be a positive integer, got {min_length}")
+        
+        # Seed validation
+        seed = self.direct_params.get('seed')
+        if seed is not None:
+            if not isinstance(seed, int):
+                raise ValueError(f"seed must be an integer, got {seed}")
+        
+        # Backend validation
+        if self.backend not in ["huggingface", "openai"]:
+            raise ValueError(f"Backend must be 'huggingface' or 'openai', got '{self.backend}'")
+        
+        # Logical validation warnings
+        if (self.direct_params.get('do_sample') is False and 
+            self.direct_params.get('temperature') is not None and 
+            self.direct_params.get('temperature') > 0):
+            print("Warning: do_sample=False with temperature > 0 may not behave as expected")
     
     def _init_huggingface(self):
         """Initialize HuggingFace backend."""
@@ -60,8 +134,7 @@ class LLMGenerator(Generator):
             # Default text generation model
             resolved_model_name = "Qwen/Qwen2.5-1.5B-Instruct"
             print(
-                f"Warning: No model_name provided for LLMGenerator via argument or 'llm_generator.model_name' in config. "
-                f"Falling back to default text-generation model '{resolved_model_name}'."
+                f"Warning: No model_name provided. Falling back to default model '{resolved_model_name}'."
             )
         
         self.model_name = resolved_model_name
@@ -71,8 +144,8 @@ class LLMGenerator(Generator):
         except Exception as e:
             raise RuntimeError(f"Failed to load HuggingFace model '{self.model_name}': {e}")
         
-        # Set seed from config if present
-        seed = self.config.get("seed")
+        # Set seed using the new parameter system
+        seed = self._get_param('seed')
         if seed is not None:
             set_seed(seed)
     
@@ -131,14 +204,14 @@ class LLMGenerator(Generator):
         """Generate using HuggingFace model."""
         prompt_text = prompt if prompt is not None else ""
 
-        # Default generation parameters
+        # Generation parameters using new parameter system
         gen_params = {
             "num_return_sequences": n_samples,
-            "temperature": self.config.get("generation_settings.default_temperature", 1.0),
-            "top_k": self.config.get("generation_settings.default_top_k", 50),
-            "top_p": self.config.get("generation_settings.default_top_p", 1.0),
-            "do_sample": self.config.get("generation_settings.default_do_sample", True),
-            "return_full_text": self.config.get("generation_settings.return_full_text", True),
+            "temperature": self._get_param("temperature", 1.0),
+            "top_k": self._get_param("top_k", 50),
+            "top_p": self._get_param("top_p", 1.0),
+            "do_sample": self._get_param("do_sample", True),
+            "return_full_text": self._get_param("return_full_text", True),
             "pad_token_id": self.generator_pipeline.tokenizer.eos_token_id if self.generator_pipeline.tokenizer and hasattr(self.generator_pipeline.tokenizer, 'eos_token_id') else None
         }
         
@@ -146,22 +219,30 @@ class LLMGenerator(Generator):
         hf_specific_params = self.config.get("llm_generator.generation_params", {})
         gen_params.update(hf_specific_params)
         
-        # Handle length parameters with priority: kwargs > config > defaults
-        default_max_new_tokens = self.config.get("generation_settings.default_max_new_tokens", 100)
-        default_min_length_total = self.config.get("generation_settings.default_min_length_total", None)
-
+        # Handle length parameters with priority: kwargs > direct params > config > defaults
         final_gen_params = {}
+        
+        # Max tokens/length handling
         if "max_new_tokens" in kwargs:
             final_gen_params["max_new_tokens"] = kwargs.pop("max_new_tokens")
         elif "max_length" in kwargs:
             final_gen_params["max_length"] = kwargs.pop("max_length")
         else:
-            final_gen_params["max_new_tokens"] = default_max_new_tokens
+            # Use max_new_tokens if explicitly set, otherwise use max_gen_tokens
+            max_new_tokens = self._get_param("max_new_tokens")
+            if max_new_tokens is not None:
+                final_gen_params["max_new_tokens"] = max_new_tokens
+            else:
+                # Use max_gen_tokens as fallback for HuggingFace
+                final_gen_params["max_new_tokens"] = self.max_gen_tokens
         
+        # Min length handling
         if "min_length" in kwargs:
             final_gen_params["min_length"] = kwargs.pop("min_length")
-        elif default_min_length_total is not None:
-            final_gen_params["min_length"] = default_min_length_total
+        else:
+            min_length = self._get_param("min_length")
+            if min_length is not None:
+                final_gen_params["min_length"] = min_length
 
         # Merge parameters: kwargs override config defaults
         gen_params.update(kwargs) 
@@ -195,8 +276,8 @@ class LLMGenerator(Generator):
         """Generate using OpenAI API."""
         prompt_text = prompt if prompt is not None else ""
         
-        # Default generation parameters
-        temperature = kwargs.get("temperature", self.config.get("generation_settings.default_temperature", 0.7))
+        # Generation parameters using new parameter system
+        temperature = kwargs.get("temperature", self._get_param("temperature", 0.7))
         max_tokens = kwargs.get("max_tokens", self.max_gen_tokens)
         
         generated_texts = []
@@ -571,17 +652,24 @@ class LLMGenerator(Generator):
         for i in range(0, len(prompts), batch_size):
             batch_prompts = prompts[i:i+batch_size]
             
-            # Get generation parameters from config
+            # Get generation parameters using new parameter system
             gen_params = {
                 "num_return_sequences": 1,  # 1 per prompt in batch
-                "temperature": self.config.get("generation_settings.default_temperature", 1.0),
-                "top_k": self.config.get("generation_settings.default_top_k", 50),
-                "top_p": self.config.get("generation_settings.default_top_p", 1.0),
-                "do_sample": self.config.get("generation_settings.default_do_sample", True),
-                "return_full_text": self.config.get("generation_settings.return_full_text", True),
-                "max_new_tokens": self.config.get("generation_settings.default_max_new_tokens", 100),
+                "temperature": self._get_param("temperature", 1.0),
+                "top_k": self._get_param("top_k", 50),
+                "top_p": self._get_param("top_p", 1.0),
+                "do_sample": self._get_param("do_sample", True),
+                "return_full_text": self._get_param("return_full_text", True),
                 "pad_token_id": self.generator_pipeline.tokenizer.eos_token_id if self.generator_pipeline.tokenizer and hasattr(self.generator_pipeline.tokenizer, 'eos_token_id') else None
             }
+            
+            # Handle max tokens consistently with _generate_huggingface
+            max_new_tokens = self._get_param("max_new_tokens")
+            if max_new_tokens is not None:
+                gen_params["max_new_tokens"] = max_new_tokens
+            else:
+                # Use max_gen_tokens as fallback for HuggingFace
+                gen_params["max_new_tokens"] = self.max_gen_tokens
             
             # Apply specific generation params from config
             hf_specific_params = self.config.get("llm_generator.generation_params", {})
@@ -620,7 +708,7 @@ class LLMGenerator(Generator):
                                 {"role": "user", "content": prompt}
                             ],
                             "max_completion_tokens": self.max_gen_tokens,
-                            "temperature": self.config.get("generation_settings.default_temperature", 0.7)
+                            "temperature": self._get_param("temperature", 0.7)
                         }
                     }
                     batchfile.write(json.dumps(request) + '\n')
@@ -683,3 +771,90 @@ class LLMGenerator(Generator):
             remove_duplicates=self.config.get("generation_settings.filtering.remove_duplicates", True),
             similarity_threshold=self.config.get("generation_settings.filtering.similarity_threshold", 0.9)
         ) 
+
+    @classmethod
+    def from_preset(cls, preset_name, target_lang, backend="huggingface", **kwargs):
+        """
+        Create generator from a preset configuration.
+        
+        Args:
+            preset_name (str): Name of preset ('creative', 'precise', 'balanced', 'fast')
+            target_lang (str): Target language code
+            backend (str): Backend system ('huggingface' or 'openai')
+            **kwargs: Override any preset parameters
+            
+        Returns:
+            LLMGenerator: Configured generator instance
+        """
+        presets = {
+            'creative': {
+                'temperature': 1.2,
+                'top_p': 0.9,
+                'top_k': 40,
+                'do_sample': True,
+                'max_gen_tokens': 200
+            },
+            'precise': {
+                'temperature': 0.3,
+                'top_p': 0.8,
+                'top_k': 10,
+                'do_sample': True,
+                'max_gen_tokens': 150
+            },
+            'balanced': {
+                'temperature': 0.8,
+                'top_p': 0.9,
+                'top_k': 50,
+                'do_sample': True,
+                'max_gen_tokens': 100
+            },
+            'fast': {
+                'temperature': 0.7,
+                'top_p': 0.9,
+                'do_sample': False,  # Greedy decoding for speed
+                'max_gen_tokens': 50
+            }
+        }
+        
+        if preset_name not in presets:
+            raise ValueError(f"Unknown preset '{preset_name}'. Available: {list(presets.keys())}")
+        
+        # Merge preset with kwargs (kwargs take priority)
+        preset_config = presets[preset_name].copy()
+        preset_config.update(kwargs)
+        
+        return cls(target_lang=target_lang, backend=backend, **preset_config)
+    
+    def _get_param(self, param_name, default_value=None, config_path=None):
+        """
+        Get parameter value with priority: direct param > config > default.
+        
+        Args:
+            param_name (str): Direct parameter name
+            default_value: Default value if not found
+            config_path (str, optional): Config path if different from param_name
+            
+        Returns:
+            Parameter value
+        """
+        # Check direct parameters first
+        if param_name in self.direct_params and self.direct_params[param_name] is not None:
+            return self.direct_params[param_name]
+        
+        # Check config with provided path or default path
+        if config_path:
+            config_value = self.config.get(config_path)
+        else:
+            # Try common config paths
+            config_paths = [
+                f"generation_settings.default_{param_name}",
+                f"llm_generator.{param_name}",
+                param_name
+            ]
+            config_value = None
+            for path in config_paths:
+                config_value = self.config.get(path)
+                if config_value is not None:
+                    break
+        
+        return config_value if config_value is not None else default_value 

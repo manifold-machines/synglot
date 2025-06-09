@@ -26,6 +26,18 @@ python main.py generate --target-lang fr --mode pretraining --domain science --n
 # Generate large-scale pretraining data using OpenAI batch API for cost efficiency  
 python main.py generate --target-lang es --mode pretraining --domain medical --backend openai --n-samples 1000 --min-length 150 --max-length 500 --use-batch --batch-job-description "Medical pretraining data generation"
 
+# Use generation presets for quick setup
+python main.py generate --target-lang en --preset creative --n-samples 20 --prompt "Write about artificial intelligence"
+
+# Advanced parameter control
+python main.py generate --target-lang de --backend huggingface --temperature 0.8 --top-p 0.9 --top-k 40 --max-gen-tokens 150
+
+# Use HuggingFace-specific max_new_tokens override
+python main.py generate --target-lang es --backend huggingface --max-gen-tokens 200 --max-new-tokens 100
+
+# OpenAI with custom max tokens
+python main.py generate --target-lang fr --backend openai --max-gen-tokens 300 --temperature 0.7
+
 
 """
 
@@ -185,6 +197,14 @@ def setup_generate_parser(subparsers):
         help='Generation mode (default: general)'
     )
     
+    # Preset configuration (enhanced)
+    generate_parser.add_argument(
+        '--preset',
+        type=str,
+        choices=['creative', 'precise', 'balanced', 'fast'],
+        help='Use a preset configuration for generation parameters (overrides individual parameter settings)'
+    )
+    
     # General generation options
     generate_parser.add_argument(
         '--prompt',
@@ -264,18 +284,57 @@ def setup_generate_parser(subparsers):
         help='Specific model name for generation'
     )
     
-    # Generation parameters
+    # Enhanced generation parameters (updated)
     generate_parser.add_argument(
         '--temperature',
         type=float,
-        default=1.0,
-        help='Sampling temperature (default: 1.0)'
+        help='Sampling temperature (0.0-2.0). Default varies by backend.'
     )
     generate_parser.add_argument(
         '--max-new-tokens',
         type=int,
-        default=100,
-        help='Maximum new tokens to generate (default: 100)'
+        help='Maximum new tokens to generate (HuggingFace only, overrides --max-gen-tokens if specified)'
+    )
+    generate_parser.add_argument(
+        '--max-gen-tokens',
+        type=int,
+        default=1024,
+        help='Maximum tokens for generation (primary parameter for both backends, default: 1024)'
+    )
+    generate_parser.add_argument(
+        '--top-k',
+        type=int,
+        help='Top-k sampling parameter (HuggingFace only)'
+    )
+    generate_parser.add_argument(
+        '--top-p',
+        type=float,
+        help='Top-p (nucleus) sampling parameter (0.0-1.0)'
+    )
+    generate_parser.add_argument(
+        '--do-sample',
+        action='store_true',
+        help='Enable sampling for generation (HuggingFace only)'
+    )
+    generate_parser.add_argument(
+        '--no-sample',
+        action='store_true',
+        help='Disable sampling for generation (HuggingFace only)'
+    )
+    generate_parser.add_argument(
+        '--min-length',
+        type=int,
+        help='Minimum total length for generation (HuggingFace only)'
+    )
+    generate_parser.add_argument(
+        '--return-full-text',
+        action='store_true',
+        help='Return full text including prompt (HuggingFace only)'
+    )
+    generate_parser.add_argument(
+        '--seed',
+        type=int,
+        help='Random seed for reproducible generation'
     )
     
     # Output options
@@ -457,12 +516,62 @@ def run_generate(args):
         print("Error: --material-path is required for material mode")
         return
     
-    # Initialize generator
-    generator = LLMGenerator(
-        target_lang=args.target_lang,
-        backend=args.backend,
-        model_name=args.model_name
-    )
+    # Prepare generation parameters from CLI arguments
+    generation_params = {}
+    
+    # Handle do_sample argument logic (mutually exclusive flags)
+    if args.do_sample and args.no_sample:
+        print("Error: --do-sample and --no-sample are mutually exclusive")
+        return
+    elif args.do_sample:
+        generation_params['do_sample'] = True
+    elif args.no_sample:
+        generation_params['do_sample'] = False
+    
+    # Add other parameters if provided
+    if args.temperature is not None:
+        generation_params['temperature'] = args.temperature
+    if args.max_new_tokens is not None:
+        generation_params['max_new_tokens'] = args.max_new_tokens
+    if args.top_k is not None:
+        generation_params['top_k'] = args.top_k
+    if args.top_p is not None:
+        generation_params['top_p'] = args.top_p
+    if args.min_length is not None:
+        generation_params['min_length'] = args.min_length
+    if args.return_full_text:
+        generation_params['return_full_text'] = True
+    if args.seed is not None:
+        generation_params['seed'] = args.seed
+    
+    # Initialize generator - use preset if specified, otherwise use individual parameters
+    try:
+        if args.preset:
+            print(f"Using preset configuration: {args.preset}")
+            generator = LLMGenerator.from_preset(
+                preset_name=args.preset,
+                target_lang=args.target_lang,
+                backend=args.backend,
+                model_name=args.model_name,
+                max_gen_tokens=args.max_gen_tokens,
+                **generation_params  # Preset parameters can be overridden by CLI args
+            )
+        else:
+            generator = LLMGenerator(
+                target_lang=args.target_lang,
+                backend=args.backend,
+                model_name=args.model_name,
+                max_gen_tokens=args.max_gen_tokens,
+                **generation_params
+            )
+            
+        print(f"Generator initialized successfully")
+        if generation_params:
+            print(f"Active generation parameters: {generation_params}")
+            
+    except Exception as e:
+        print(f"Failed to initialize generator: {e}")
+        return
     
     # Determine if we should save to file
     save_to_file = True  # Always save to file in CLI mode
@@ -507,12 +616,14 @@ def run_generate(args):
                     )
                     generated_data = [{"text": text, "prompt": args.prompt} for text in generated_texts]
             else:
-                # Regular generation
+                # Regular generation - pass additional kwargs for runtime parameter override
+                runtime_kwargs = {}
+                # max_new_tokens is already passed to constructor if specified, so no need to pass again
+                
                 generated_texts = generator.generate(
                     prompt=args.prompt,
                     n_samples=args.n_samples,
-                    temperature=args.temperature,
-                    max_new_tokens=args.max_new_tokens
+                    **runtime_kwargs
                 )
                 generated_data = [{"text": text, "prompt": args.prompt} for text in generated_texts]
             
@@ -523,7 +634,8 @@ def run_generate(args):
                 else:
                     os.makedirs(output_dir, exist_ok=True)
                     batch_suffix = "_batch" if args.use_batch else ""
-                    filename = f"generated_general_{args.target_lang}_{args.backend}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                    preset_suffix = f"_{args.preset}" if args.preset else ""
+                    filename = f"generated_general_{args.target_lang}_{args.backend}{preset_suffix}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{args.format}"
                     output_path = os.path.join(output_dir, filename)
                 
                 # Save data
@@ -591,7 +703,8 @@ def run_generate(args):
                     else:
                         os.makedirs(output_dir, exist_ok=True)
                         batch_suffix = "_batch"
-                        filename = f"generated_pretraining_{args.domain}_{args.target_lang}_{args.backend}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+                        preset_suffix = f"_{args.preset}" if args.preset else ""
+                        filename = f"generated_pretraining_{args.domain}_{args.target_lang}_{args.backend}{preset_suffix}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
                         output_path = os.path.join(output_dir, filename)
                     
                     output_dirname = os.path.dirname(output_path)
