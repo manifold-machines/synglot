@@ -3,7 +3,7 @@ name = "synglot"
 version = "0.1.0"
 description = "Synthetic Data Generation and Translation Toolkit"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
     {name = "Ilija Lichkovski", email = "ilija@manifold.mk"},
@@ -24,19 +24,61 @@ classifiers = [
 ]
 
 dependencies = [
-    "transformers",
-    "datasets",
-    "torch",
-    "PyYAML",
-    "numpy",
-    "sacremoses",
-    "sentencepiece",
-    "openai",
-    "dotenv",
-    # Add other dependencies as needed, e.g.:
-    # "openai",
-    # "anthropic",
-    # "google-generativeai",
+    # Core ML libraries
+    "transformers>=4.18.0",
+    "datasets>=2.0.0", 
+    "torch>=1.9.0",
+    "numpy>=1.20.0",
+    
+    # Data processing
+    "pandas>=1.3.0",
+    "PyYAML>=6.0",
+    "tqdm>=4.62.0",
+    "beautifulsoup4==4.13.4",
+    "bs4==0.0.2",
+    
+    # NLP tools
+    "sacremoses>=0.0.53",
+    "sentencepiece>=0.1.96",
+    "tiktoken==0.9.0",
+    
+    # API integrations
+    "openai>=1.0.0",
+    "python-dotenv>=0.19.0",
+    "mistralai",
+    
+    # Utilities
+    "pathlib2>=2.3.6",
+    #"python_version<'3.4'",
+]
+
+[project.optional-dependencies]
+all = [
+    # Additional API providers
+    "anthropic>=0.5.0",
+    "google-generativeai>=0.1.0",
+    "mistralai>=0.1.0",
+    
+    # Visualization and analysis
+    "matplotlib>=3.5.0",
+    "seaborn>=0.11.0",
+    
+    # Web scraping (used in scripts)
+    "requests>=2.25.0",
+    "beautifulsoup4>=4.9.0",
+    
+    # Additional utilities
+    "Pillow>=8.0.0",  # For image processing if needed
+]
+
+dev = [
+    # Development tools
+    "pytest>=6.0.0",
+    "pytest-cov>=2.10.0",
+    "black>=21.0.0",
+    "isort>=5.0.0",
+    "flake8>=3.8.0",
+    "mypy>=0.800",
 ]
 
 [project.urls]
