@@ -322,7 +322,7 @@ def setup_generate_parser(subparsers):
         help='Disable sampling for generation (HuggingFace only)'
     )
     generate_parser.add_argument(
-        '--min-length',
+        '--min-gen-length',
         type=int,
         help='Minimum total length for generation (HuggingFace only)'
     )
@@ -537,8 +537,8 @@ def run_generate(args):
         generation_params['top_k'] = args.top_k
     if args.top_p is not None:
         generation_params['top_p'] = args.top_p
-    if args.min_length is not None:
-        generation_params['min_length'] = args.min_length
+    if args.min_gen_length is not None:
+        generation_params['min_length'] = args.min_gen_length
     if args.return_full_text:
         generation_params['return_full_text'] = True
     if args.seed is not None:
