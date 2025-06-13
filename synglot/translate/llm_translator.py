@@ -1,5 +1,5 @@
 from .base import Translator
-from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, M2M100ForConditionalGeneration
 import openai
 import json
 import tempfile
@@ -11,27 +11,30 @@ from typing import List, Union, Optional, Dict, Any
 from synglot.utils import retrieve_batch
 from tqdm import tqdm
 import tiktoken
+import torch
 
 class LLMTranslator(Translator):
-    """Unified translator supporting standard ML models (MarianMT), LLM APIs (OpenAI), and Google Translate API."""
+    """Unified translator supporting standard ML models (MarianMT), LLM APIs (OpenAI), Google Translate API, and NLLB."""
     
-    def __init__(self, source_lang, target_lang, backend="marianmt", model_name=None, max_gen_tokens=1024, project_id=None):
+    def __init__(self, source_lang, target_lang, backend="marianmt", model_name=None, max_gen_tokens=1024, project_id=None, device="auto"):
         """
         Initialize unified translator.
         
         Args:
             source_lang (str): Source language code (e.g., 'en')
             target_lang (str): Target language code (e.g., 'fr')
-            backend (str): Backend translation system. Supports 'marianmt', 'openai', or 'google'.
-            model_name (str): Model name (for OpenAI: e.g., 'gpt-4o-mini'; for MarianMT: auto-determined; ignored for Google)
+            backend (str): Backend translation system. Supports 'marianmt', 'openai', 'google', or 'nllb'.
+            model_name (str): Model name (for OpenAI: e.g., 'gpt-4o-mini'; for MarianMT: auto-determined; for NLLB: defaults to facebook/nllb-200-distilled-600M; ignored for Google)
             max_gen_tokens (int): Maximum tokens for generation (used by OpenAI backend)
             project_id (str): Google Cloud project ID (required for Google backend)
+            device (str): Device for NLLB model ('auto', 'cpu', 'cuda', or specific device)
         """
         super().__init__(source_lang, target_lang)
         self.backend = backend
         self.model_name = model_name
         self.max_gen_tokens = max_gen_tokens
         self.project_id = project_id
+        self.device = device
 
         if self.backend == "marianmt":
             try:
@@ -42,6 +45,40 @@ class LLMTranslator(Translator):
                 raise ValueError(
                     f"Failed to load MarianMT model for {source_lang}-{target_lang}. "
                     f"Ensure the language pair is supported and transformers library is correctly installed. Error: {e}"
+                )
+        elif self.backend == "nllb":
+            try:
+                self.model_name = model_name if model_name else "facebook/nllb-200-distilled-600M"
+                
+                # Determine device
+                if device == "auto":
+                    self.device = "cuda" if torch.cuda.is_available() else "cpu"
+                else:
+                    self.device = device
+                
+                # Load model and tokenizer
+                self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                
+                # Use float16 for efficiency if on CUDA
+                if self.device == "cuda" or (isinstance(self.device, str) and "cuda" in self.device):
+                    self.model = M2M100ForConditionalGeneration.from_pretrained(
+                        self.model_name, torch_dtype=torch.float16
+                    ).to(self.device).eval()
+                else:
+                    self.model = M2M100ForConditionalGeneration.from_pretrained(self.model_name).to(self.device).eval()
+                
+                # Map language codes to NLLB format
+                self.source_lang_nllb = self._map_lang_to_nllb(source_lang)
+                self.target_lang_nllb = self._map_lang_to_nllb(target_lang)
+                
+                print(f"NLLB model loaded on {self.device}")
+                print(f"Source language: {source_lang} -> {self.source_lang_nllb}")
+                print(f"Target language: {target_lang} -> {self.target_lang_nllb}")
+                
+            except Exception as e:
+                raise ValueError(
+                    f"Failed to load NLLB model {self.model_name}. "
+                    f"Ensure the model is available and transformers/torch libraries are correctly installed. Error: {e}"
                 )
         elif self.backend == "openai":
             # Load environment variables from .env file
@@ -84,8 +121,100 @@ class LLMTranslator(Translator):
             self.parent = f"projects/{self.project_id}"
         else:
             raise NotImplementedError(
-                f"Backend '{self.backend}' is not supported. Currently supports 'marianmt', 'openai', and 'google'."
+                f"Backend '{self.backend}' is not supported. Currently supports 'marianmt', 'openai', 'google', and 'nllb'."
             )
+
+    def _map_lang_to_nllb(self, lang_code):
+        """
+        Map standard language codes to NLLB format.
+        This is a basic mapping - extend as needed for more languages.
+        """
+        # Common language mappings to NLLB format
+        lang_mapping = {
+            'en': 'eng_Latn',
+            'es': 'spa_Latn', 
+            'fr': 'fra_Latn',
+            'de': 'deu_Latn',
+            'it': 'ita_Latn',
+            'pt': 'por_Latn',
+            'ru': 'rus_Cyrl',
+            'zh': 'zho_Hans',
+            'ja': 'jpn_Jpan',
+            'ko': 'kor_Hang',
+            'ar': 'arb_Arab',
+            'hi': 'hin_Deva',
+            'tr': 'tur_Latn',
+            'pl': 'pol_Latn',
+            'nl': 'nld_Latn',
+            'sv': 'swe_Latn',
+            'da': 'dan_Latn',
+            'no': 'nob_Latn',
+            'fi': 'fin_Latn',
+            'el': 'ell_Grek',
+            'he': 'heb_Hebr',
+            'th': 'tha_Thai',
+            'vi': 'vie_Latn',
+            'uk': 'ukr_Cyrl',
+            'cs': 'ces_Latn',
+            'hu': 'hun_Latn',
+            'ro': 'ron_Latn',
+            'bg': 'bul_Cyrl',
+            'hr': 'hrv_Latn',
+            'sk': 'slk_Latn',
+            'sl': 'slv_Latn',
+            'et': 'est_Latn',
+            'lv': 'lav_Latn',
+            'lt': 'lit_Latn',
+            'mk': 'mkd_Cyrl',
+            'id': 'ind_Latn',
+            'ms': 'zsm_Latn',
+            'bn': 'ben_Beng',
+            'ta': 'tam_Taml',
+            'te': 'tel_Telu',
+            'ml': 'mal_Mlym',
+            'kn': 'kan_Knda',
+            'gu': 'guj_Gujr',
+            'pa': 'pan_Guru',
+            'ur': 'urd_Arab',
+            'fa': 'pes_Arab',
+            'sw': 'swh_Latn',
+            'am': 'amh_Ethi',
+            'ig': 'ibo_Latn',
+            'yo': 'yor_Latn',
+            'ha': 'hau_Latn',
+            'zu': 'zul_Latn',
+            'af': 'afr_Latn',
+            'eu': 'eus_Latn',
+            'ca': 'cat_Latn',
+            'gl': 'glg_Latn',
+            'cy': 'cym_Latn',
+            'ga': 'gle_Latn',
+            'is': 'isl_Latn',
+            'mt': 'mlt_Latn',
+            'sq': 'als_Latn',
+            'be': 'bel_Cyrl',
+            'az': 'azj_Latn',
+            'ka': 'kat_Geor',
+            'hy': 'hye_Armn',
+            'kk': 'kaz_Cyrl',
+            'ky': 'kir_Cyrl',
+            'uz': 'uzn_Latn',
+            'tg': 'tgk_Cyrl',
+            'mn': 'khk_Cyrl',
+            'ne': 'npi_Deva',
+            'si': 'sin_Sinh',
+            'my': 'mya_Mymr',
+            'km': 'khm_Khmr',
+            'lo': 'lao_Laoo'
+        }
+        
+        mapped = lang_mapping.get(lang_code)
+        if mapped:
+            return mapped
+        else:
+            # If no mapping found, try to construct one with Latin script as default
+            print(f"Warning: No NLLB mapping found for '{lang_code}', using '{lang_code}_Latn' as fallback")
+            return f"{lang_code}_Latn"
 
     def _num_tokens_consumed_from_request(self, request_json: dict) -> int:
         """Count the number of tokens in a chat completion request."""
@@ -110,7 +239,7 @@ class LLMTranslator(Translator):
         return num_tokens
 
     def translate(self, text):
-        """Translate using the configured backend (MarianMT, OpenAI, or Google Translate)."""
+        """Translate using the configured backend (MarianMT, OpenAI, Google Translate, or NLLB)."""
         if self.backend == "marianmt":
             if not self.model or not self.tokenizer:
                 raise RuntimeError("MarianMT model and tokenizer not initialized properly.")
@@ -118,6 +247,32 @@ class LLMTranslator(Translator):
             inputs = self.tokenizer(text, return_tensors="pt", padding=True, truncation=True)
             translated_tokens = self.model.generate(**inputs)
             translated_text = self.tokenizer.decode(translated_tokens[0], skip_special_tokens=True)
+            return translated_text
+            
+        elif self.backend == "nllb":
+            if not self.model or not self.tokenizer:
+                raise RuntimeError("NLLB model and tokenizer not initialized properly.")
+            
+            # Set source language for tokenizer
+            self.tokenizer.src_lang = self.source_lang_nllb
+            
+            # Tokenize input
+            encoded_input = self.tokenizer(
+                text, 
+                return_tensors="pt", 
+                padding=True, 
+                truncation=True
+            ).to(self.device)
+            
+            # Generate translation with forced target language
+            target_token_id = self.tokenizer.convert_tokens_to_ids(self.target_lang_nllb)
+            translated_tokens = self.model.generate(
+                **encoded_input, 
+                forced_bos_token_id=target_token_id
+            )
+            
+            # Decode and return translation
+            translated_text = self.tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)
             return translated_text
             
         elif self.backend == "openai":
@@ -165,11 +320,11 @@ class LLMTranslator(Translator):
         
         Args:
             texts (list): List of texts to translate
-            batch_size (int): Batch size for MarianMT and Google Translate (ignored for OpenAI batch API)
+            batch_size (int): Batch size for MarianMT, NLLB, and Google Translate (ignored for OpenAI batch API)
             batch_job_description (str): Description for OpenAI batch jobs
             
         Returns:
-            For MarianMT and Google Translate: List of translated texts
+            For MarianMT, NLLB, and Google Translate: List of translated texts
             For OpenAI: Batch job object (use retrieve_batch to get results)
         """
         if self.backend == "marianmt":
@@ -183,6 +338,43 @@ class LLMTranslator(Translator):
                 translated_tokens = self.model.generate(**inputs)
                 batch_translations = [self.tokenizer.decode(t, skip_special_tokens=True) for t in translated_tokens]
                 translations.extend(batch_translations)
+            return translations
+            
+        elif self.backend == "nllb":
+            if not self.model or not self.tokenizer:
+                raise RuntimeError("NLLB model and tokenizer not initialized properly.")
+            
+            # Set source language for tokenizer
+            self.tokenizer.src_lang = self.source_lang_nllb
+            target_token_id = self.tokenizer.convert_tokens_to_ids(self.target_lang_nllb)
+            
+            translations = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i+batch_size]
+                
+                # Tokenize batch
+                encoded_input = self.tokenizer(
+                    batch, 
+                    return_tensors="pt", 
+                    padding=True, 
+                    truncation=True
+                ).to(self.device)
+                
+                # Generate translations
+                translated_tokens = self.model.generate(
+                    **encoded_input, 
+                    forced_bos_token_id=target_token_id
+                )
+                
+                # Decode batch translations
+                batch_translations = self.tokenizer.batch_decode(translated_tokens, skip_special_tokens=True)
+                translations.extend(batch_translations)
+                
+                # Clean up GPU memory if using CUDA
+                if self.device != "cpu":
+                    del encoded_input, translated_tokens
+                    torch.cuda.empty_cache()
+            
             return translations
             
         elif self.backend == "openai":
@@ -278,7 +470,7 @@ class LLMTranslator(Translator):
             except Exception as e:
                 raise RuntimeError(f"Google Translate API error during batch translation: {e}")
         else:
-            # Fallback to base class implementation
+            # Fallback to base class implementation for unsupported backends
             return super().translate_batch(texts, batch_size)
 
     def retrieve_batch(self, batch_job_or_result, save_results=True):
@@ -505,7 +697,7 @@ class LLMTranslator(Translator):
                 }
                 
         else:
-            # MarianMT and Google Translate batch processing - synchronous
+            # MarianMT, NLLB, and Google Translate batch processing - synchronous
             print(f"Using {self.backend} batch processing...")
             
             # Convert dataset to list for easier processing
