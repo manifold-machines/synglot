@@ -24,7 +24,7 @@ class LLMTranslator(Translator):
             source_lang (str): Source language code (e.g., 'en')
             target_lang (str): Target language code (e.g., 'fr')
             backend (str): Backend translation system. Supports 'marianmt', 'openai', 'google', or 'nllb'.
-            model_name (str): Model name (for OpenAI: e.g., 'gpt-4o-mini'; for MarianMT: auto-determined; for NLLB: defaults to facebook/nllb-200-distilled-600M; ignored for Google)
+            model_name (str): Model name (for OpenAI: e.g., 'gpt-4o-mini'; for MarianMT: auto-determined; for NLLB: defaults to facebook/nllb-200-3.3B; ignored for Google)
             max_gen_tokens (int): Maximum tokens for generation (used by OpenAI backend)
             project_id (str): Google Cloud project ID (required for Google backend)
             device (str): Device for NLLB model ('auto', 'cpu', 'cuda', or specific device)
@@ -48,7 +48,7 @@ class LLMTranslator(Translator):
                 )
         elif self.backend == "nllb":
             try:
-                self.model_name = model_name if model_name else "facebook/nllb-200-distilled-600M"
+                self.model_name = model_name if model_name else "facebook/nllb-200-3.3B"
                 
                 # Determine device
                 if device == "auto":
