@@ -1,6 +1,6 @@
 # Synglot: Comprehensive Synthetic Data Generation and Translation Toolkit
 
-[![Build Status](https://img.shields.io/travis/com/manifold-intelligence/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
+[![Build Status](https://img.shields.io/travis/com/manifold-machines/synglot.svg)](https://travis-ci.com/manifold-machines/synglot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
 > **Note: This project is currently under development. Many features may break and the generation functionality is not fully implemented. Features and APIs may change without notice. Use with caution. You're welcome to contribute!**
@@ -28,7 +28,7 @@
 
 ### Basic Installation
 ```bash
-git clone https://github.com/manifold-intelligence/synglot.git
+git clone https://github.com/manifold-machines/synglot.git
 cd synglot
 # Install uv package manager if needed
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -257,7 +257,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Support
 
 - **Documentation**: [API Docs](./docs/api/README.md)
-- **Issues**: [GitHub Issues](https://github.com/manifold-intelligence/synglot/issues)
+- **Issues**: [GitHub Issues](https://github.com/manifold-machines/synglot/issues)
 - **Examples**: Check the `docs/examples/` directory
 
 ---
