@@ -3,7 +3,7 @@
 [![Build Status](https://img.shields.io/travis/com/manifold-intelligence/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
-> **Note: This project is currently under development. Many features may break and Features and APIs may change without notice. Use with caution in production environments.**
+> **Note: This project is currently under development. Many features may break and the generation functionality is not fully implemented. Features and APIs may change without notice. Use with caution. You're welcome to contribute!**
 
 
 `Synglot` is a Python NLP toolkit for bulk machine translation, synthetic data generation, and multilingual dataset management. The goal is to make it extremely simple to bulk translate datasets in new languages, as well as synthetically generate new ones, in order to empower NLP research in low-resource languages.
