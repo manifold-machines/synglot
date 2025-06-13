@@ -3,20 +3,28 @@
 [![Build Status](https://img.shields.io/travis/com/manifold-intelligence/synglot.svg)](https://travis-ci.com/manifold-intelligence/synglot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) 
 
-`Synglot` is a powerful Python toolkit designed to empower researchers and developers in Natural Language Processing (NLP) with comprehensive capabilities for synthetic data generation, machine translation, and multilingual dataset management.
+> **Note: This project is currently under development. Many features may break and Features and APIs may change without notice. Use with caution in production environments.**
 
-## 🚀 Key Features
 
-- **🔄 Unified Translation**: Multi-backend translation supporting MarianMT, OpenAI, and Google Translate APIs
-- **✨ Advanced Generation**: Sophisticated synthetic data generation with HuggingFace and OpenAI backends
-- **📊 Powerful Dataset Management**: Comprehensive dataset handling with pandas-like operations
-- **⚡ Batch Processing**: Efficient batch processing with OpenAI's async batch API (50% cost reduction)
-- **🛠️ CLI Interface**: Full command-line interface for all operations
-- **🔧 Flexible Configuration**: Rich configuration system with YAML support
-- **🔍 Built-in Analysis**: Dataset analysis and quality metrics
-- **🌍 Multilingual**: Support for 100+ languages through various backends
+`Synglot` is a Python NLP toolkit for bulk machine translation, synthetic data generation, and multilingual dataset management. The goal is to make it extremely simple to bulk translate datasets in new languages, as well as synthetically generate new ones, in order to empower NLP research in low-resource languages.
 
-## 📦 Installation
+
+## Roadmap
+- implement further throttling to the OpenAI translator to avoid enqueued token limits, as well as TPD limits.
+- add sentence splitting to the NLLB backend for higher quality.
+- integrate the PDF scripts into the core Synglot library
+- refactor and implement real generation functionality
+- add OpenRouter support for more providers
+
+## Key Features
+
+- **Unified Translation**: Multi-backend translation supporting MarianMT, NLLB, OpenAI, and Google Translate APIs
+- **Generation**: Synthetic data generation with HuggingFace and OpenAI backends
+- **Powerful Dataset Management**: Comprehensive dataset handling with pandas-like operations
+- **Batch Processing**: Process many examples at once with optimized performance (especially NLLB)
+- **CLI Interface**: Full command-line interface for all operations
+
+## Installation
 
 ### Basic Installation
 ```bash
@@ -44,12 +52,12 @@ export GOOGLE_CLOUD_PROJECT_ID="your-project-id"
 # Set up authentication (see CLI guide for details)
 ```
 
-#### For HuggingFace Models
+#### For HuggingFace Models (MarianMT and NLLB)
 ```bash
-pip install transformers torch
+uv pip install transformers torch
 ```
 
-## 🎯 Quick Start
+## Quick Start
 
 ### Translation Example
 ```python
@@ -60,8 +68,8 @@ from synglot.dataset import Dataset
 dataset = Dataset()
 dataset.load_from_huggingface("squad", split="train[:100]", columns=["question", "context"])
 
-# Initialize translator (supports 'marianmt', 'openai', 'google')
-translator = LLMTranslator("en", "es", backend="openai")
+# Initialize translator (supports 'marianmt', 'nllb', 'openai', 'google')
+translator = LLMTranslator("en", "es", backend="nllb")
 
 # Translate dataset with comprehensive error handling
 summary = translator.translate_dataset(
@@ -74,64 +82,7 @@ print(f"Translated {summary['successful_translations']} samples")
 print(f"Success rate: {summary['success_rate']:.2%}")
 ```
 
-### Generation Example
-```python
-from synglot.generate import LLMGenerator
-
-# Initialize generator (supports 'huggingface', 'openai')
-generator = LLMGenerator("es", backend="openai", temperature=0.8)
-
-# Generate diverse training data
-pretraining_data = generator.generate_pretraining(
-    domain="science",
-    n_samples=100,
-    min_length=200,
-    max_length=500,
-    save_to_file=True
-)
-
-# Generate conversations
-conversations = generator.generate_conversations(
-    domain="customer_service",
-    n_samples=50,
-    n_turns_min=3,
-    n_turns_max=7,
-    save_to_file=True
-)
-
-# Generate from existing materials
-samples = generator.generate_from_material(
-    material_paths=["docs/*.md", "papers/*.txt"],
-    chunk_size=1000,
-    n_samples_per_chunk=3,
-    save_to_file=True
-)
-```
-
-### Dataset Operations
-```python
-from synglot.dataset import Dataset
-
-# Load and manipulate data
-dataset = Dataset()
-dataset.load_from_huggingface("imdb", columns=["text", "label"])
-
-# Powerful data operations
-positive_reviews = dataset.filter(lambda row: row['label'] == 1)
-clean_data = dataset.map(lambda text: text.lower(), columns=['text'])
-sample_data = dataset.sample(100, random_state=42)
-
-# Advanced indexing
-first_10_texts = dataset[0:10, 'text']
-specific_columns = dataset[['text', 'label']]
-
-# Analysis
-dataset.info()
-dataset.describe()
-label_counts = dataset.value_counts('label')
-```
-
-## 💻 Command Line Interface
+## Command Line Interface
 
 Synglot provides a comprehensive CLI for all operations:
 
@@ -145,7 +96,7 @@ python main.py translate \
   --columns text,title \
   --source-lang en \
   --target-lang es \
-  --backend openai
+  --backend nllb
 
 # Translate HuggingFace dataset
 python main.py translate \
@@ -153,59 +104,26 @@ python main.py translate \
   --columns question,context \
   --source-lang en \
   --target-lang fr \
-  --backend google \
+  --backend nllb \
   --max-samples 1000
 ```
 
-#### Batch Translation (50% cost reduction with OpenAI)
+#### Batch Translation (Optimized performance with NLLB, 50% cost reduction with OpenAI)
 ```bash
 python main.py translate \
   --dataset-path large_dataset.json \
   --columns content \
   --source-lang en \
   --target-lang zh \
-  --backend openai \
+  --backend nllb \
   --use-batch
 ```
 
-### Generation Commands
-
-#### Pretraining Data Generation
-```bash
-python main.py generate \
-  --target-lang es \
-  --mode pretraining \
-  --domain science \
-  --n-samples 1000 \
-  --min-length 200 \
-  --max-length 500
-```
-
-#### Conversation Generation
-```bash
-python main.py generate \
-  --target-lang fr \
-  --mode conversation \
-  --domain technology \
-  --n-samples 100 \
-  --n-turns-min 3 \
-  --n-turns-max 7
-```
-
-#### Material-Based Generation
-```bash
-python main.py generate \
-  --target-lang de \
-  --mode material \
-  --material-path ./docs/*.txt \
-  --chunk-size 1500 \
-  --n-samples-per-chunk 4
-```
-
-## 🏗️ Architecture
+## Architecture
 
 ### Translation Backends
 - **MarianMT**: Fast, offline translation (free, limited language pairs)
+- **NLLB**: High-performance, 200+ languages, optimized batch processing (free, offline)
 - **OpenAI**: High-quality translation with batch processing support
 - **Google Translate**: 100+ languages, cost-effective for large volumes
 
@@ -219,7 +137,7 @@ python main.py generate \
 - **Analysis**: Statistics, quality metrics, vocabulary analysis
 - **Advanced Indexing**: Pandas-like row/column access
 
-## 📚 API Documentation
+## API Documentation
 
 Comprehensive API documentation is available:
 
@@ -230,7 +148,7 @@ Comprehensive API documentation is available:
 - **[Utils Module](./docs/api/utils.md)** - Configuration, batch processing, text utilities
 - **[Analysis Module](./docs/api/analyze.md)** - Dataset analysis and metrics
 
-## 🔧 Configuration
+## Configuration
 
 Synglot uses a powerful configuration system for fine-grained control:
 
@@ -251,92 +169,32 @@ creative_gen = LLMGenerator.from_preset("creative", "en", backend="openai")
 precise_gen = LLMGenerator.from_preset("precise", "en", temperature=0.1)
 ```
 
-## 🎛️ Backend Comparison
+## Backend Comparison
 
-| Feature | MarianMT | OpenAI | Google Translate |
-|---------|----------|--------|------------------|
-| **Setup** | Medium | Easy | Medium |
-| **Cost** | Free | Pay per token | Pay per character |
-| **Quality** | Good | Excellent | Excellent |
-| **Speed** | Fast (local) | Medium | Fast |
-| **Languages** | Limited pairs | Many | 100+ |
-| **Batch** | Yes | Yes (async) | Yes |
-| **Offline** | Yes | No | No |
-| **Best For** | Development, Privacy | High quality, Complex | Many languages, Cost-effective |
+| Feature | MarianMT | NLLB | OpenAI | Google Translate |
+|---------|----------|------|--------|------------------|
+| **Setup** | Medium | Easy | Easy | Medium |
+| **Cost** | Free | Free | Pay per token | Pay per character |
+| **Quality** | Good | Excellent | Excellent | Excellent |
+| **Speed** | Fast (local) | Very Fast (local) | Medium | Fast |
+| **Languages** | Limited pairs | 200+ | Many | 100+ |
+| **Batch** | Yes | Optimized | Yes (async) | Yes |
+| **Offline** | Yes | Yes | No | No |
+| **Best For** | Development, Privacy | High performance, Many languages | High quality, Complex | Cost-effective |
 
-## 📋 Examples
+## Advanced Features
 
-### Complete Translation Workflow
+### Batch Processing with Cost Optimization (for OpenAI translations) and Performance Optimization (for NLLB)
 ```python
-from synglot.dataset import Dataset
-from synglot.translate import LLMTranslator
-
-# Load dataset
-dataset = Dataset()
-dataset.load_from_huggingface("gsm8k", split="train", columns=["question", "answer"])
-
-# Multi-step translation workflow
-translator = LLMTranslator("en", "es", backend="openai")
-
-# 1. Test with small sample
-sample = dataset.sample(10)
-test_summary = translator.translate_dataset(
-    dataset=sample,
-    columns_to_translate=["question"]
+# NLLB batch processing (optimized performance, free)
+translator = LLMTranslator("en", "zh", backend="nllb")
+batch_job = translator.translate_dataset(
+    dataset=large_dataset,
+    columns_to_translate=["content"],
+    use_batch=True,
+    batch_size=1000  # Optimized for NLLB performance
 )
 
-# 2. Scale up with batch processing
-if test_summary['success_rate'] > 0.9:
-    batch_job = translator.translate_dataset(
-        dataset=dataset,
-        columns_to_translate=["question", "answer"],
-        use_batch=True  # 50% cost reduction
-    )
-    
-    # 3. Retrieve results when complete
-    results = translator.retrieve_batch(batch_job)
-```
-
-### Advanced Generation Pipeline
-```python
-from synglot.generate import LLMGenerator
-from synglot.utils import load_material_files, chunk_text, filter_generated_content
-
-# Material-based generation with quality filtering
-generator = LLMGenerator("fr", backend="huggingface", model_name="microsoft/DialoGPT-medium")
-
-# Load and process materials
-materials = load_material_files(["docs/*.md", "papers/*.txt"])
-
-all_generated = []
-for material in materials:
-    # Split into chunks
-    chunks = chunk_text(material["content"], chunk_size=1000, overlap=100)
-    
-    # Generate from each chunk
-    for chunk in chunks:
-        generated = generator.generate(
-            prompt=f"Based on this text: {chunk['text'][:200]}...",
-            n_samples=3,
-            temperature=0.8
-        )
-        all_generated.extend(generated)
-
-# Filter for quality
-filtered = filter_generated_content(
-    all_generated,
-    min_length=50,
-    min_quality_score=0.7,
-    remove_duplicates=True
-)
-
-print(f"Generated {len(all_generated)} samples, kept {len(filtered)} after filtering")
-```
-
-## 🔍 Advanced Features
-
-### Batch Processing with Cost Optimization
-```python
 # OpenAI batch processing (50% cost reduction)
 translator = LLMTranslator("en", "zh", backend="openai")
 batch_job = translator.translate_dataset(
@@ -351,22 +209,7 @@ batch_job = translator.translate_dataset(
 results = translator.retrieve_batch(batch_job)
 ```
 
-### Quality-Aware Generation
-```python
-from synglot.utils import filter_generated_content
 
-# Generate with quality filtering
-generator = LLMGenerator("es", backend="openai")
-raw_generated = generator.generate("Write about AI", n_samples=100)
-
-# Filter for high-quality content
-filtered = filter_generated_content(
-    raw_generated,
-    min_quality_score=0.8,
-    remove_duplicates=True,
-    similarity_threshold=0.9
-)
-```
 
 ### Configuration-Driven Workflows
 ```python
@@ -378,38 +221,40 @@ generator = LLMGenerator("en", config=config)
 translator = LLMTranslator("en", "fr", config=config)
 ```
 
-## 🚀 Performance Tips
+## Performance Tips
 
-1. **Use batch processing** for large datasets (50% cost reduction with OpenAI)
+1. **Use batch processing** for large datasets (optimized performance with NLLB, 50% cost reduction with OpenAI)
 2. **Start with small samples** using `max_samples` parameter for testing
-3. **Choose the right backend** based on your needs (quality vs cost vs speed)
-4. **Filter generated content** to maintain quality
-5. **Use configuration presets** for consistent parameters
+3. **Choose the right backend** based on your needs (quality vs cost vs speed vs language coverage)
+4. **Use NLLB for maximum language coverage** and batch performance optimization
+5. **Filter generated content** to maintain quality
+6. **Use configuration presets** for consistent parameters
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+2. Create a feature branch (`git checkout -b amazing-feature`)
 3. Make your changes and add tests
 4. Commit your changes (`git commit -m 'Add amazing feature'`)
-5. Push to the branch (`git push origin feature/amazing-feature`)
+5. Push to the branch (`git push origin amazing-feature`)
 6. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgements
+## Acknowledgements
 
 - **Hugging Face** for their transformers and datasets libraries
+- **Meta AI** for their No Language Left Behind (NLLB) models and research
 - **OpenAI** for their powerful language models and batch API
 - **Google Cloud** for their Translation API
 - **University of Helsinki NLP group** for MarianMT models
 - The open-source community for making projects like this possible
 
-## 📞 Support
+## Support
 
 - **Documentation**: [API Docs](./docs/api/README.md)
 - **Issues**: [GitHub Issues](https://github.com/manifold-intelligence/synglot/issues)
