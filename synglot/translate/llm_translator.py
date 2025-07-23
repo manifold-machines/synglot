@@ -748,23 +748,62 @@ class LLMTranslator(Translator):
             return None
         
         try:
-            # Determine file extension and format
-            if hasattr(media_data, 'save'):  # PIL Image
-                extension = "jpg"
-                format_type = "JPEG"
+            # Handle PIL Images
+            if hasattr(media_data, 'save') and hasattr(media_data, 'mode'):  # PIL Image
+                image = media_data
+                
+                # Determine format based on image mode and characteristics
+                if image.mode in ('RGBA', 'LA') or (image.mode == 'P' and 'transparency' in image.info):
+                    # Images with transparency should be saved as PNG
+                    extension = "png"
+                    format_type = "PNG"
+                elif image.mode in ('RGB', 'L', 'CMYK'):
+                    # Images without transparency can be saved as JPEG
+                    extension = "jpg"
+                    format_type = "JPEG"
+                else:
+                    # For other modes, convert to RGB and save as JPEG
+                    if image.mode == 'RGBA':
+                        # Convert RGBA to RGB with white background
+                        rgb_image = image.convert('RGB')
+                        image = rgb_image
+                    elif image.mode == 'LA':
+                        # Convert LA to L (grayscale)
+                        image = image.convert('L')
+                    elif image.mode == 'P':
+                        # Convert palette to RGB
+                        image = image.convert('RGB')
+                    else:
+                        # Convert any other mode to RGB
+                        image = image.convert('RGB')
+                    
+                    extension = "jpg"
+                    format_type = "JPEG"
+                
+                filename = f"{media_field_name}_{sample_index:06d}.{extension}"
+                full_path = os.path.join(media_output_dir, filename)
+                relative_path = f"media/{filename}"
+                
+                # Save the file with appropriate parameters
+                if format_type == "JPEG":
+                    image.save(full_path, format_type, quality=95, optimize=True)
+                else:  # PNG
+                    image.save(full_path, format_type, optimize=True)
+                
+                return relative_path
+                
+            # Handle other types of media data (could be extended for audio, video, etc.)
+            elif hasattr(media_data, 'save'):
+                # Generic save method - try to determine format
+                filename = f"{media_field_name}_{sample_index:06d}.dat"
+                full_path = os.path.join(media_output_dir, filename)
+                relative_path = f"media/{filename}"
+                
+                media_data.save(full_path)
+                return relative_path
             else:
-                # Could add more media type detection here
+                # Unknown media type
                 return None
-            
-            filename = f"{media_field_name}_{sample_index:06d}.{extension}"
-            full_path = os.path.join(media_output_dir, filename)
-            relative_path = f"media/{filename}"
-            
-            # Save the file
-            if hasattr(media_data, 'save'):
-                media_data.save(full_path, format_type, quality=95)
-            
-            return relative_path
             
         except Exception as e:
             print(f"Warning: Failed to save media file for sample {sample_index}: {e}")
@@ -835,9 +874,26 @@ class LLMTranslator(Translator):
                             try:
                                 # Create output record
                                 output_record = dict(sample) if isinstance(sample, dict) else {"original_data": sample}
-                                
-                                # Handle media files
-                                if media_field_name in output_record:
+
+                                # Handle all media files (detect PIL Image objects automatically)
+                                media_fields_processed = []
+                                for field_name, field_value in list(output_record.items()):
+                                    if hasattr(field_value, 'save') and hasattr(field_value, 'format'):  # PIL Image detection
+                                        media_path = self._save_media_file(
+                                            field_value, 
+                                            media_output_dir, 
+                                            processed_count, 
+                                            field_name  # Use the actual field name
+                                        )
+                                        if media_path:
+                                            output_record[field_name] = media_path
+                                            media_fields_processed.append(field_name)
+                                        else:
+                                            # If saving fails, remove the field to prevent JSON serialization errors
+                                            del output_record[field_name]
+
+                                # Legacy single media field handling (for backwards compatibility)
+                                if media_field_name in output_record and media_field_name not in media_fields_processed:
                                     media_path = self._save_media_file(
                                         output_record[media_field_name], 
                                         media_output_dir, 
@@ -846,6 +902,9 @@ class LLMTranslator(Translator):
                                     )
                                     if media_path:
                                         output_record[media_field_name] = media_path
+                                    else:
+                                        # If saving fails, remove the field to prevent JSON serialization errors
+                                        del output_record[media_field_name]
                                 
                                 # Add translations back to the sample
                                 self._add_translations_to_sample(
@@ -1175,6 +1234,14 @@ class LLMTranslator(Translator):
             translated_data = []
             for item in dataset_list:
                 result_item = dict(item) if isinstance(item, dict) else {"original_data": item}
+                
+                # Handle all media files (detect PIL Image objects automatically)
+                for field_name, field_value in list(result_item.items()):
+                    if hasattr(field_value, 'save') and hasattr(field_value, 'format'):  # PIL Image detection
+                        # For batch mode, we'll remove image fields to prevent serialization issues
+                        # Images can be processed separately if needed
+                        del result_item[field_name]
+                
                 translated_data.append(result_item)
             
             success_count = 0
@@ -1406,6 +1473,13 @@ class LLMTranslator(Translator):
                     try:
                         # Create output record starting with original data
                         output_record = dict(item) if isinstance(item, dict) else {"original_data": item}
+                        
+                        # Handle all media files (detect PIL Image objects automatically)
+                        for field_name, field_value in list(output_record.items()):
+                            if hasattr(field_value, 'save') and hasattr(field_value, 'format'):  # PIL Image detection
+                                # For sequential mode, we'll remove image fields to prevent serialization issues
+                                # Images can be processed separately if needed
+                                del output_record[field_name]
                         
                         # Translate each specified column
                         for column in columns_to_translate:
