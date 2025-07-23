@@ -1,0 +1,1 @@
+python main.py translate --hf-dataset vikhyatk/lnqa --target-lang mk --source-lang en --backend nllb --streaming-mode --batch-size 100
