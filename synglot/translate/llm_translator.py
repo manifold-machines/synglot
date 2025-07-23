@@ -502,13 +502,19 @@ class LLMTranslator(Translator):
                          use_batch: bool = False,
                          batch_job_description: str = "dataset translation",
                          batch_request_limit: int = 50000,
-                         batch_token_limit: int = 1900000) -> Dict[str, Any]:
+                         batch_token_limit: int = 1900000,
+                         streaming_mode: bool = False,
+                         auto_reduce_batch_size: bool = True,
+                         min_batch_size: int = 1,
+                         nested_field_separator: str = ".",
+                         media_output_dir: Optional[str] = None,
+                         media_field_name: str = "image") -> Dict[str, Any]:
         """
         Translate specified columns in a dataset with comprehensive error handling and progress tracking.
         
         Args:
             dataset: Dataset object to translate
-            columns_to_translate (str or list): Column name(s) to translate
+            columns_to_translate (str or list): Column name(s) to translate. Supports nested fields like "qa.question"
             output_path (str, optional): Full path for output file. If None, auto-generated.
             output_dir (str): Directory to save output (used if output_path is None)
             batch_size (int): Batch size for translation
@@ -519,6 +525,12 @@ class LLMTranslator(Translator):
             batch_job_description (str): Description for batch jobs (OpenAI only)
             batch_request_limit (int): Maximum number of requests per batch for OpenAI backend
             batch_token_limit (int): Maximum number of tokens per batch for OpenAI backend
+            streaming_mode (bool): Whether to process dataset in streaming mode (for large datasets)
+            auto_reduce_batch_size (bool): Whether to automatically reduce batch size on OOM errors
+            min_batch_size (int): Minimum batch size when auto-reducing
+            nested_field_separator (str): Separator for nested field names (e.g., "qa.question")
+            media_output_dir (str, optional): Directory to save media files (images, etc.). If None, uses output_dir/media
+            media_field_name (str): Name of the field containing media data
             
         Returns:
             dict: Summary statistics including success/error counts and output path
@@ -529,64 +541,513 @@ class LLMTranslator(Translator):
             columns_to_translate = [columns_to_translate]
         elif columns_to_translate is None:
             # Auto-detect translatable columns
-            if hasattr(dataset, 'columns') and dataset.columns:
-                all_columns = list(dataset.columns)
-                # Inline logic for finding translatable columns
-                columns_to_translate = []
-                sample_size = min(10, len(dataset))
-                sample_data = list(dataset)[:sample_size]
-                
-                for column in all_columns:
-                    is_translatable = False
-                    for item in sample_data:
-                        value = item.get(column) if isinstance(item, dict) else str(item)
-                        if isinstance(value, str) and len(value.strip()) > 0:
-                            if any(c.isalpha() for c in value):
-                                is_translatable = True
-                                break
-                    if is_translatable:
-                        columns_to_translate.append(column)
-                
-                print(f"No columns specified, auto-detecting translatable columns: {columns_to_translate}")
-                if not columns_to_translate:
-                    raise ValueError("No translatable text columns found in dataset")
-            else:
-                raise ValueError("No columns specified and dataset has no detectable columns")
+            columns_to_translate = self._auto_detect_translatable_columns(dataset, streaming_mode, nested_field_separator)
         
-        # Validate columns exist in dataset
-        if hasattr(dataset, 'columns') and dataset.columns:
-            missing_columns = [col for col in columns_to_translate if col not in dataset.columns]
+        # Validate columns exist in dataset (only if not streaming)
+        if not streaming_mode and hasattr(dataset, 'columns') and dataset.columns:
+            missing_columns = [col for col in columns_to_translate if not self._column_exists(dataset, col, nested_field_separator)]
             if missing_columns:
-                raise ValueError(f"Columns {missing_columns} not found in dataset. Available columns: {dataset.columns}")
+                available = list(dataset.columns) if hasattr(dataset, 'columns') else "unknown"
+                raise ValueError(f"Columns {missing_columns} not found in dataset. Available columns: {available}")
         
-        # Setup output path
+        # Setup output paths
         if output_path is None:
             os.makedirs(output_dir, exist_ok=True)
             batch_suffix = "_batch" if use_batch else ""
-            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            streaming_suffix = "_streaming" if streaming_mode else ""
+            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}{streaming_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             output_path = os.path.join(output_dir, filename)
         else:
-            # Ensure output directory exists only if there's actually a directory in the path
+            # Ensure output directory exists
             output_dirname = os.path.dirname(output_path)
-            if output_dirname:  # Only create directory if path contains a directory
+            if output_dirname:
                 os.makedirs(output_dirname, exist_ok=True)
         
-        total_samples = len(dataset)
-        print(f"Starting {'batch ' if use_batch else ''}translation of {total_samples} samples using {self.backend} backend...")
+        # Setup media output directory
+        if media_output_dir is None:
+            media_output_dir = os.path.join(output_dir, "media")
+        os.makedirs(media_output_dir, exist_ok=True)
+        
+        # Determine total samples (only if not streaming)
+        if streaming_mode:
+            total_samples = None
+            print(f"Starting {'batch ' if use_batch else ''}translation in streaming mode using {self.backend} backend...")
+        else:
+            total_samples = len(dataset)
+            print(f"Starting {'batch ' if use_batch else ''}translation of {total_samples} samples using {self.backend} backend...")
+        
         print(f"Translating columns: {columns_to_translate}")
         if use_batch:
             print(f"Batch size: {batch_size}")
             if self.backend == "openai":
                 print(f"Request limit per batch: {batch_request_limit}")
                 print(f"Token limit per batch: {batch_token_limit:,}")
+        if auto_reduce_batch_size and self.backend in ["nllb", "marianmt"]:
+            print(f"Auto batch size reduction enabled (min: {min_batch_size})")
         print(f"Output will be saved to: {output_path}")
+        if media_output_dir:
+            print(f"Media files will be saved to: {media_output_dir}")
         
-        if use_batch:
+        if streaming_mode:
+            return self._translate_dataset_streaming_mode(
+                dataset, columns_to_translate, output_path, batch_size, 
+                auto_reduce_batch_size, min_batch_size, nested_field_separator, 
+                media_output_dir, media_field_name, save_errors
+            )
+        elif use_batch:
             return self._translate_dataset_batch_mode(dataset, columns_to_translate, output_path, 
                                                     batch_size, batch_job_description, total_samples, batch_request_limit, batch_token_limit)
         else:
             return self._translate_dataset_sequential_mode(dataset, columns_to_translate, output_path,
                                                          progress_interval, save_errors, append_mode, total_samples)
+
+    def _auto_detect_translatable_columns(self, dataset, streaming_mode, nested_field_separator):
+        """Auto-detect translatable columns in the dataset."""
+        if streaming_mode:
+            # For streaming datasets, sample first few items
+            sample_data = []
+            dataset_iter = iter(dataset)
+            for _ in range(min(10, 100)):  # Sample up to 10 items
+                try:
+                    sample_data.append(next(dataset_iter))
+                except StopIteration:
+                    break
+        else:
+            if hasattr(dataset, 'columns') and dataset.columns:
+                all_columns = list(dataset.columns)
+                sample_size = min(10, len(dataset))
+                sample_data = list(dataset)[:sample_size]
+            else:
+                sample_data = list(dataset)[:10]
+                all_columns = None
+        
+        if not sample_data:
+            raise ValueError("No samples found in dataset for auto-detection")
+        
+        columns_to_translate = []
+        
+        if all_columns:
+            # Standard column-based detection
+            for column in all_columns:
+                is_translatable = self._is_column_translatable(sample_data, column, nested_field_separator)
+                if is_translatable:
+                    columns_to_translate.append(column)
+        else:
+            # Nested structure detection
+            nested_columns = self._find_nested_text_fields(sample_data, nested_field_separator)
+            columns_to_translate.extend(nested_columns)
+        
+        print(f"No columns specified, auto-detecting translatable columns: {columns_to_translate}")
+        if not columns_to_translate:
+            raise ValueError("No translatable text columns found in dataset")
+        
+        return columns_to_translate
+
+    def _column_exists(self, dataset, column, nested_field_separator):
+        """Check if a column exists in the dataset, supporting nested fields."""
+        if nested_field_separator in column:
+            # For nested fields, we can't easily check without sampling
+            return True  # Assume it exists, will be validated during processing
+        return hasattr(dataset, 'columns') and column in dataset.columns
+
+    def _is_column_translatable(self, sample_data, column, nested_field_separator):
+        """Check if a column contains translatable text."""
+        for item in sample_data:
+            value = self._get_nested_value(item, column, nested_field_separator)
+            if isinstance(value, str) and len(value.strip()) > 0:
+                if any(c.isalpha() for c in value):
+                    return True
+        return False
+
+    def _find_nested_text_fields(self, sample_data, nested_field_separator, prefix="", max_depth=3):
+        """Recursively find nested text fields in the dataset."""
+        if max_depth <= 0:
+            return []
+        
+        text_fields = []
+        
+        for item in sample_data[:3]:  # Sample first 3 items
+            if isinstance(item, dict):
+                for key, value in item.items():
+                    field_path = f"{prefix}{key}" if prefix else key
+                    
+                    if isinstance(value, str) and len(value.strip()) > 0:
+                        if any(c.isalpha() for c in value):
+                            if field_path not in text_fields:
+                                text_fields.append(field_path)
+                    elif isinstance(value, list) and value:
+                        # Handle list of dicts (like QA pairs)
+                        if isinstance(value[0], dict):
+                            nested_fields = self._find_nested_text_fields(
+                                value, nested_field_separator, f"{field_path}{nested_field_separator}", max_depth - 1
+                            )
+                            text_fields.extend(nested_fields)
+                    elif isinstance(value, dict):
+                        # Handle nested dict
+                        nested_fields = self._find_nested_text_fields(
+                            [value], nested_field_separator, f"{field_path}{nested_field_separator}", max_depth - 1
+                        )
+                        text_fields.extend(nested_fields)
+        
+        return list(set(text_fields))  # Remove duplicates
+
+    def _get_nested_value(self, item, field_path, nested_field_separator):
+        """Get value from nested field path like 'qa.question'."""
+        if nested_field_separator not in field_path:
+            return item.get(field_path) if isinstance(item, dict) else None
+        
+        parts = field_path.split(nested_field_separator)
+        current = item
+        
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            elif isinstance(current, list):
+                # Handle list of items (like QA pairs)
+                results = []
+                for list_item in current:
+                    if isinstance(list_item, dict) and part in list_item:
+                        results.append(list_item[part])
+                return results if results else None
+            else:
+                return None
+        
+        return current
+
+    def _set_nested_value(self, item, field_path, value, nested_field_separator):
+        """Set value in nested field path like 'qa.question'."""
+        if nested_field_separator not in field_path:
+            if isinstance(item, dict):
+                item[field_path] = value
+            return
+        
+        parts = field_path.split(nested_field_separator)
+        current = item
+        
+        # Navigate to the parent of the target field
+        for part in parts[:-1]:
+            if isinstance(current, dict):
+                if part not in current:
+                    current[part] = {}
+                current = current[part]
+            elif isinstance(current, list):
+                # This is more complex for lists - we'd need index information
+                # For now, skip this case
+                return
+        
+        # Set the final value
+        final_key = parts[-1]
+        if isinstance(current, dict):
+            current[final_key] = value
+
+    def _save_media_file(self, media_data, media_output_dir, sample_index, media_field_name="image"):
+        """Save media file (image, etc.) and return relative path."""
+        if media_data is None:
+            return None
+        
+        try:
+            # Determine file extension and format
+            if hasattr(media_data, 'save'):  # PIL Image
+                extension = "jpg"
+                format_type = "JPEG"
+            else:
+                # Could add more media type detection here
+                return None
+            
+            filename = f"{media_field_name}_{sample_index:06d}.{extension}"
+            full_path = os.path.join(media_output_dir, filename)
+            relative_path = f"media/{filename}"
+            
+            # Save the file
+            if hasattr(media_data, 'save'):
+                media_data.save(full_path, format_type, quality=95)
+            
+            return relative_path
+            
+        except Exception as e:
+            print(f"Warning: Failed to save media file for sample {sample_index}: {e}")
+            return None
+
+    def _translate_dataset_streaming_mode(self, dataset, columns_to_translate, output_path, 
+                                        initial_batch_size, auto_reduce_batch_size, min_batch_size, 
+                                        nested_field_separator, media_output_dir, media_field_name, save_errors):
+        """Handle streaming mode translation with OOM protection and nested structure support."""
+        current_batch_size = initial_batch_size
+        processed_count = 0
+        success_count = 0
+        error_count = 0
+        batch_number = 0
+        
+        print(f"Starting streaming translation with batch size {current_batch_size}...")
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            dataset_iter = iter(dataset)
+            
+            while True:
+                try:
+                    # Collect batch of samples and extract all texts
+                    batch_samples = []
+                    batch_texts = []
+                    text_metadata = []  # Tracks which text belongs to which sample/field
+                    
+                    # Collect samples for current batch
+                    for _ in range(current_batch_size):
+                        try:
+                            sample = next(dataset_iter)
+                            sample_idx = len(batch_samples)
+                            batch_samples.append(sample)
+                            
+                            # Extract all translatable texts from this sample
+                            for column in columns_to_translate:
+                                texts = self._extract_texts_from_field(sample, column, nested_field_separator)
+                                for text_info in texts:
+                                    batch_texts.append(text_info['text'])
+                                    text_metadata.append({
+                                        'sample_idx': sample_idx,
+                                        'column': column,
+                                        'path': text_info['path'],
+                                        'index': text_info.get('index', None)
+                                    })
+                        except StopIteration:
+                            break
+                    
+                    # If no samples collected, we've reached the end
+                    if not batch_samples:
+                        print("Reached end of dataset")
+                        break
+                    
+                    batch_number += 1
+                    print(f"Processing batch {batch_number}: {len(batch_texts)} text pieces from {len(batch_samples)} samples")
+                    
+                    # Translate all texts in batch
+                    if batch_texts:
+                        print(f"  Translating batch of {len(batch_texts)} texts...")
+                        if hasattr(self, 'translate_batch'):
+                            translated_texts = self.translate_batch(batch_texts)
+                        else:
+                            translated_texts = [self.translate(text) for text in batch_texts]
+                        
+                        # Reconstruct samples with translations
+                        print(f"  Reconstructing {len(batch_samples)} samples...")
+                        for sample_idx, sample in enumerate(batch_samples):
+                            try:
+                                # Create output record
+                                output_record = dict(sample) if isinstance(sample, dict) else {"original_data": sample}
+                                
+                                # Handle media files
+                                if media_field_name in output_record:
+                                    media_path = self._save_media_file(
+                                        output_record[media_field_name], 
+                                        media_output_dir, 
+                                        processed_count, 
+                                        media_field_name
+                                    )
+                                    if media_path:
+                                        output_record[media_field_name] = media_path
+                                
+                                # Add translations back to the sample
+                                self._add_translations_to_sample(
+                                    output_record, translated_texts, text_metadata, 
+                                    sample_idx, nested_field_separator
+                                )
+                                
+                                # Write to file
+                                f.write(json.dumps(output_record, ensure_ascii=False) + '\n')
+                                f.flush()
+                                
+                                success_count += 1
+                                processed_count += 1
+                                
+                                if processed_count % 10 == 0:
+                                    print(f"  Processed {processed_count} samples")
+                                    
+                            except Exception as e:
+                                error_count += 1
+                                print(f"  Error processing sample {processed_count + 1}: {e}")
+                                
+                                if save_errors:
+                                    error_record = {
+                                        'sample_index': processed_count + 1,
+                                        'error': str(e),
+                                        'error_type': type(e).__name__,
+                                        'original_data': dict(sample) if isinstance(sample, dict) else sample
+                                    }
+                                    f.write(json.dumps(error_record, ensure_ascii=False) + '\n')
+                                    f.flush()
+                                
+                                processed_count += 1
+                    else:
+                        # No texts to translate, just save samples
+                        for sample in batch_samples:
+                            output_record = dict(sample) if isinstance(sample, dict) else {"original_data": sample}
+                            f.write(json.dumps(output_record, ensure_ascii=False) + '\n')
+                            processed_count += 1
+                    
+                    # Clear GPU cache after each batch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                        
+                except RuntimeError as e:
+                    if auto_reduce_batch_size and ("out of memory" in str(e).lower() or "oom" in str(e).lower()):
+                        print(f"  OOM Error with batch size {current_batch_size}: {e}")
+                        
+                        # Reduce batch size
+                        current_batch_size = max(current_batch_size // 2, min_batch_size)
+                        
+                        if current_batch_size < min_batch_size:
+                            print(f"  Batch size reduced to minimum ({min_batch_size}), but still getting OOM. Stopping.")
+                            break
+                        
+                        print(f"  Reducing batch size to {current_batch_size} and retrying...")
+                        
+                        # Clear GPU cache
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        
+                        # Continue with next iteration
+                        continue
+                    else:
+                        print(f"  Unexpected error: {e}")
+                        break
+                
+                except Exception as e:
+                    print(f"  Unexpected error processing batch: {e}")
+                    error_count += len(batch_samples) if batch_samples else 1
+                    continue
+        
+        # Final summary
+        summary = {
+            "total_samples": processed_count,
+            "successful_translations": success_count,
+            "errors": error_count,
+            "success_rate": success_count / processed_count if processed_count > 0 else 0,
+            "output_path": output_path,
+            "columns_translated": columns_to_translate,
+            "source_language": self.source_lang,
+            "target_language": self.target_lang,
+            "backend": self.backend,
+            "final_batch_size": current_batch_size,
+            "streaming_mode": True,
+            "status": "completed"
+        }
+        
+        print(f"\nStreaming translation complete!")
+        print(f"Total samples processed: {processed_count}")
+        print(f"Successful translations: {success_count}")
+        print(f"Errors: {error_count}")
+        print(f"Success rate: {summary['success_rate']:.2%}")
+        print(f"Final batch size: {current_batch_size}")
+        print(f"Output saved to: {output_path}")
+        
+        return summary
+
+    def _extract_texts_from_field(self, sample, field_path, nested_field_separator):
+        """Extract all translatable texts from a field, handling nested structures."""
+        texts = []
+        
+        if nested_field_separator in field_path:
+            # Handle nested field like "qa.question"
+            parts = field_path.split(nested_field_separator)
+            current = sample
+            
+            # Navigate to the target field
+            for i, part in enumerate(parts[:-1]):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return texts  # Path doesn't exist
+            
+            final_key = parts[-1]
+            
+            if isinstance(current, list):
+                # Handle list of items (like QA pairs)
+                for idx, item in enumerate(current):
+                    if isinstance(item, dict) and final_key in item:
+                        text = item[final_key]
+                        if isinstance(text, str) and text.strip():
+                            texts.append({
+                                'text': text,
+                                'path': field_path,
+                                'index': idx
+                            })
+            elif isinstance(current, dict) and final_key in current:
+                text = current[final_key]
+                if isinstance(text, str) and text.strip():
+                    texts.append({
+                        'text': text,
+                        'path': field_path
+                    })
+        else:
+            # Simple field
+            if isinstance(sample, dict) and field_path in sample:
+                text = sample[field_path]
+                if isinstance(text, str) and text.strip():
+                    texts.append({
+                        'text': text,
+                        'path': field_path
+                    })
+        
+        return texts
+
+    def _add_translations_to_sample(self, output_record, translated_texts, text_metadata, 
+                                  sample_idx, nested_field_separator):
+        """Add translated texts back to the sample record."""
+        for i, metadata in enumerate(text_metadata):
+            if metadata['sample_idx'] == sample_idx:
+                translation = translated_texts[i]
+                field_path = metadata['path']
+                
+                # Create translated field name
+                if nested_field_separator in field_path:
+                    # For nested fields like "qa.question", create "translated_qa.question"
+                    parts = field_path.split(nested_field_separator)
+                    translated_field = f"translated_{parts[0]}{nested_field_separator}{nested_field_separator.join(parts[1:])}"
+                else:
+                    translated_field = f"translated_{field_path}_{self.target_lang}"
+                
+                # Set the translation in the output record
+                if nested_field_separator in translated_field:
+                    # Handle nested structure
+                    self._set_translated_nested_value(
+                        output_record, translated_field, translation, 
+                        nested_field_separator, metadata.get('index')
+                    )
+                else:
+                    # Simple field
+                    output_record[translated_field] = translation
+
+    def _set_translated_nested_value(self, record, field_path, value, nested_field_separator, list_index=None):
+        """Set translated value in nested structure."""
+        parts = field_path.split(nested_field_separator)
+        current = record
+        
+        # Navigate/create the nested structure
+        for part in parts[:-1]:
+            if part not in current:
+                current[part] = {}
+            elif not isinstance(current[part], dict):
+                # If it exists but isn't a dict, we need to handle list case
+                if isinstance(current[part], list):
+                    # For list structures, we might need special handling
+                    pass
+                else:
+                    current[part] = {}
+            current = current[part]
+        
+        final_key = parts[-1]
+        
+        # Handle list index if provided
+        if list_index is not None:
+            if final_key not in current:
+                current[final_key] = []
+            
+            # Ensure list is long enough
+            while len(current[final_key]) <= list_index:
+                current[final_key].append(None)
+            
+            current[final_key][list_index] = value
+        else:
+            current[final_key] = value
 
     def _translate_dataset_batch_mode(self, dataset, columns_to_translate, output_path, 
                                     batch_size, batch_job_description, total_samples, batch_request_limit=40000, batch_token_limit=1900000):
@@ -721,10 +1182,11 @@ class LLMTranslator(Translator):
                 text_indices = []
                 
                 for i, item in enumerate(dataset_list):
-                    text = item.get(column) if isinstance(item, dict) else str(item)
-                    if text is not None and str(text).strip():
-                        texts_to_translate.append(str(text))
-                        text_indices.append(i)
+                    # Use new helper method to extract texts from nested fields
+                    texts = self._extract_texts_from_field(item, column, ".")
+                    for text_info in texts:
+                        texts_to_translate.append(text_info['text'])
+                        text_indices.append({'sample_idx': i, 'text_info': text_info})
                 
                 if not texts_to_translate:
                     print(f"No valid texts found for column '{column}', skipping.")
@@ -737,9 +1199,23 @@ class LLMTranslator(Translator):
                     translated_texts = self.translate_batch(texts_to_translate, batch_size)
                     
                     # Add translations back to the dataset
-                    translated_column_name = f"translated_{column}_{self.target_lang}"
-                    for idx, translation in zip(text_indices, translated_texts):
-                        translated_data[idx][translated_column_name] = translation
+                    for idx_info, translation in zip(text_indices, translated_texts):
+                        sample_idx = idx_info['sample_idx']
+                        text_info = idx_info['text_info']
+                        
+                        # Create translated field name
+                        if "." in text_info['path']:
+                            # For nested fields like "qa.question", create "translated_qa.question"
+                            parts = text_info['path'].split(".")
+                            translated_field = f"translated_{parts[0]}.{'.'.join(parts[1:])}"
+                            self._set_translated_nested_value(
+                                translated_data[sample_idx], translated_field, translation, 
+                                ".", text_info.get('index')
+                            )
+                        else:
+                            translated_column_name = f"translated_{column}_{self.target_lang}"
+                            translated_data[sample_idx][translated_column_name] = translation
+                        
                         success_count += 1
                         
                     print(f"Successfully translated {len(translated_texts)} texts for column '{column}'")
@@ -749,9 +1225,20 @@ class LLMTranslator(Translator):
                     error_count += len(texts_to_translate)
                     
                     # Add None values for failed translations
-                    translated_column_name = f"translated_{column}_{self.target_lang}"
-                    for idx in text_indices:
-                        translated_data[idx][translated_column_name] = None
+                    for idx_info in text_indices:
+                        sample_idx = idx_info['sample_idx']
+                        text_info = idx_info['text_info']
+                        
+                        if "." in text_info['path']:
+                            parts = text_info['path'].split(".")
+                            translated_field = f"translated_{parts[0]}.{'.'.join(parts[1:])}"
+                            self._set_translated_nested_value(
+                                translated_data[sample_idx], translated_field, None, 
+                                ".", text_info.get('index')
+                            )
+                        else:
+                            translated_column_name = f"translated_{column}_{self.target_lang}"
+                            translated_data[sample_idx][translated_column_name] = None
             
             # Save results
             with open(output_path, 'w', encoding='utf-8') as f:
@@ -900,25 +1387,36 @@ class LLMTranslator(Translator):
                         
                         # Translate each specified column
                         for column in columns_to_translate:
-                            original_text = item.get(column) if isinstance(item, dict) else str(item)
+                            # Use new helper method to extract texts from nested fields
+                            texts = self._extract_texts_from_field(item, column, ".")
                             
-                            if original_text is None:
-                                print(f"Warning: Column '{column}' is None in sample {i+1}, skipping translation for this column.")
+                            if not texts:
+                                print(f"Warning: No translatable text found in column '{column}' for sample {i+1}")
                                 continue
                             
-                            if not isinstance(original_text, str):
-                                original_text = str(original_text)
-                            
-                            if not original_text.strip():
-                                print(f"Warning: Column '{column}' is empty in sample {i+1}, skipping translation for this column.")
-                                continue
-                            
-                            # Perform translation
-                            translated_text = self.translate(original_text)
-                            
-                            # Add translated column to output
-                            translated_column_name = f"translated_{column}_{self.target_lang}"
-                            output_record[translated_column_name] = translated_text
+                            # Translate all texts from this column
+                            for text_info in texts:
+                                try:
+                                    # Perform translation
+                                    translated_text = self.translate(text_info['text'])
+                                    
+                                    # Add translated column to output
+                                    if "." in text_info['path']:
+                                        # Handle nested fields
+                                        parts = text_info['path'].split(".")
+                                        translated_field = f"translated_{parts[0]}.{'.'.join(parts[1:])}"
+                                        self._set_translated_nested_value(
+                                            output_record, translated_field, translated_text, 
+                                            ".", text_info.get('index')
+                                        )
+                                    else:
+                                        # Simple field
+                                        translated_column_name = f"translated_{column}_{self.target_lang}"
+                                        output_record[translated_column_name] = translated_text
+                                
+                                except Exception as e:
+                                    print(f"Warning: Failed to translate text in column '{column}' for sample {i+1}: {e}")
+                                    continue
                         
                         # Write successful record
                         f.write(json.dumps(output_record, ensure_ascii=False) + '\n')
