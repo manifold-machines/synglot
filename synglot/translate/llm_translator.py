@@ -536,6 +536,7 @@ class LLMTranslator(Translator):
             dict: Summary statistics including success/error counts and output path
             For OpenAI batch mode: Returns batch job info that needs to be retrieved later with retrieve_batch()
         """
+        dataset_name = dataset.info.dataset_name if hasattr(dataset, 'info') and hasattr(dataset.info, 'dataset_name') else "dataset"
         # Ensure columns_to_translate is a list
         if isinstance(columns_to_translate, str):
             columns_to_translate = [columns_to_translate]
@@ -555,7 +556,7 @@ class LLMTranslator(Translator):
             os.makedirs(output_dir, exist_ok=True)
             batch_suffix = "_batch" if use_batch else ""
             streaming_suffix = "_streaming" if streaming_mode else ""
-            filename = f"{dataset.name}_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}{streaming_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            filename = f"{dataset_name}_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}{streaming_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             output_path = os.path.join(output_dir, filename)
         else:
             # Ensure output directory exists
@@ -565,7 +566,7 @@ class LLMTranslator(Translator):
         
         # Setup media output directory
         if media_output_dir is None:
-            media_output_dir = os.path.join(output_dir, f"{dataset.name}_media")
+            media_output_dir = os.path.join(output_dir, f"{dataset_name}_media")
         os.makedirs(media_output_dir, exist_ok=True)
         
         # Determine total samples (only if not streaming)

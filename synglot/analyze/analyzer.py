@@ -3,7 +3,7 @@ from collections import Counter
 import numpy as np
 
 if TYPE_CHECKING:
-    from synglot.dataset.dataset import Dataset  # Assuming Dataset is in synglot.dataset
+    from datasets import Dataset  # HuggingFace datasets
 
 class Analyzer:
     """Dataset analysis tools."""
@@ -13,7 +13,7 @@ class Analyzer:
         Initialize analyzer.
         
         Args:
-            dataset (Dataset): Dataset to analyze
+            dataset (Dataset): HuggingFace Dataset to analyze
         """
         self.dataset = dataset
 
@@ -130,15 +130,15 @@ class Analyzer:
         Returns:
             List[Dict[str, Any]]: A list of random samples.
         """
-        if hasattr(self.dataset, 'sample') and callable(getattr(self.dataset, 'sample')):
-            return self.dataset.sample(n=n)
-        else:
-            # Fallback if dataset doesn't have a .sample() method or it's not as expected.
-            # This is a simple random sampling if the dataset is sequence-like.
-            # Note: `self.dataset.sample()` is the preferred method as per design_doc.md.
-            # This fallback might be needed if the Dataset class isn't fully available yet
-            # or has a different API than anticipated.
-            import random
-            if len(self.dataset) < n:
-                return list(self.dataset) # or raise error, or return all
-            return random.sample(list(self.dataset), n) 
+        # HuggingFace datasets have a shuffle method and can be sliced
+        import random
+        
+        if len(self.dataset) == 0:
+            return []
+        
+        if len(self.dataset) <= n:
+            return list(self.dataset)
+        
+        # Create indices for random sampling
+        indices = random.sample(range(len(self.dataset)), n)
+        return [self.dataset[i] for i in indices] 

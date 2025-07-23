@@ -68,7 +68,9 @@ from datetime import datetime
 # Add the current directory to Python path for local imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from synglot import Dataset, LLMTranslator, LLMGenerator
+from datasets import load_dataset, Dataset
+import pandas as pd
+from synglot import LLMTranslator, LLMGenerator
 from synglot.utils import config
 
 
@@ -479,38 +481,95 @@ def setup_generate_parser(subparsers):
     )
 
 
-def load_dataset(args) -> Dataset:
-    """Load dataset based on CLI arguments."""
-    dataset = Dataset(source_lang=args.source_lang, target_lang=args.target_lang)
+def load_dataset_from_args(args) -> Dataset:
+    """Load dataset based on CLI arguments using HuggingFace datasets."""
     
     if args.dataset_path:
         # Load from local file
-        file_format = 'csv' if args.dataset_path.endswith('.csv') else 'json'
-        dataset.load_from_file(args.dataset_path, format=file_format)
+        print(f"Loading dataset from {args.dataset_path}")
+        
+        if args.dataset_path.endswith('.csv'):
+            # Load CSV using pandas first for easier handling
+            df = pd.read_csv(args.dataset_path)
+            dataset = Dataset.from_pandas(df)
+        elif args.dataset_path.endswith('.json'):
+            # Load JSON file
+            with open(args.dataset_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                dataset = Dataset.from_list(data)
+            else:
+                raise ValueError("JSON file must contain a list of records")
+        elif args.dataset_path.endswith('.jsonl'):
+            # Load JSONL file
+            data = []
+            with open(args.dataset_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    data.append(json.loads(line.strip()))
+            dataset = Dataset.from_list(data)
+        else:
+            raise ValueError(f"Unsupported file format. Supported formats: .csv, .json, .jsonl")
+        
         print(f"Loaded dataset from {args.dataset_path}")
         
     elif args.hf_dataset:
         # Load from HuggingFace
-        hf_columns = args.hf_columns.split(',') if args.hf_columns else None
-        dataset.load_from_huggingface(
-            dataset_name=args.hf_dataset,
-            split=args.hf_split,
-            columns=hf_columns,
-            config_name=args.hf_config
-        )
-        print(f"Loaded HuggingFace dataset: {args.hf_dataset}")
+        print(f"Loading HuggingFace dataset: {args.hf_dataset}")
+        
+        streaming_mode = getattr(args, 'streaming_mode', False)
+        
+        try:
+            dataset = load_dataset(
+                args.hf_dataset,
+                name=args.hf_config,
+                split=args.hf_split,
+                streaming=streaming_mode
+            )
+        except Exception as e:
+            print(f"Error loading dataset from HuggingFace: {e}")
+            raise
+        
+        # Select specific columns if requested
+        if args.hf_columns:
+            hf_columns = [col.strip() for col in args.hf_columns.split(',')]
+            if not streaming_mode:
+                # For non-streaming datasets, we can validate columns exist
+                available_columns = dataset.column_names
+                missing_columns = [col for col in hf_columns if col not in available_columns]
+                if missing_columns:
+                    print(f"Warning: Columns {missing_columns} not found in dataset")
+                    print(f"Available columns: {available_columns}")
+                    # Keep only columns that exist
+                    hf_columns = [col for col in hf_columns if col in available_columns]
+            
+            if hf_columns:
+                dataset = dataset.select_columns(hf_columns)
+        
         if args.hf_config:
             print(f"Config: {args.hf_config}")
         print(f"Split: {args.hf_split}")
     
-    print(f"Dataset loaded with {len(dataset)} samples")
-    if hasattr(dataset, 'columns') and dataset.columns:
-        print(f"Available columns: {list(dataset.columns)}")
+    else:
+        raise ValueError("Either --dataset-path or --hf-dataset must be provided")
     
-    # Limit samples if requested
-    if hasattr(args, 'max_samples') and args.max_samples:
+    # Print dataset info
+    if not getattr(args, 'streaming_mode', False):
+        print(f"Dataset loaded with {len(dataset)} samples")
+        print(f"Available columns: {dataset.column_names}")
+    else:
+        print("Dataset loaded in streaming mode")
+        # For streaming datasets, we can't easily get the length, but we can show columns
+        try:
+            # Get first item to see column structure
+            first_item = next(iter(dataset))
+            print(f"Sample columns: {list(first_item.keys())}")
+        except:
+            print("Could not determine columns for streaming dataset")
+    
+    # Limit samples if requested (only for non-streaming datasets)
+    if hasattr(args, 'max_samples') and args.max_samples and not getattr(args, 'streaming_mode', False):
         if len(dataset) > args.max_samples:
-            dataset = dataset.head(args.max_samples)
+            dataset = dataset.select(range(args.max_samples))
             print(f"Limited to {args.max_samples} samples for testing")
     
     return dataset
@@ -534,7 +593,7 @@ def run_translate(args):
         print("Append mode: ENABLED")
     
     # Load dataset
-    dataset = load_dataset(args)
+    dataset = load_dataset_from_args(args)
     
     if len(dataset) == 0:
         print("Error: Dataset is empty")
@@ -545,8 +604,8 @@ def run_translate(args):
         columns_to_translate = [col.strip() for col in args.columns.split(',')]
     else:
         # If no columns specified, translate all available columns
-        if hasattr(dataset, 'columns') and dataset.columns:
-            columns_to_translate = list(dataset.columns)
+        if hasattr(dataset, 'column_names') and dataset.column_names:
+            columns_to_translate = list(dataset.column_names)
         else:
             print("Error: Dataset has no columns and no columns were specified for translation")
             return
