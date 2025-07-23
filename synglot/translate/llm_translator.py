@@ -555,7 +555,7 @@ class LLMTranslator(Translator):
             os.makedirs(output_dir, exist_ok=True)
             batch_suffix = "_batch" if use_batch else ""
             streaming_suffix = "_streaming" if streaming_mode else ""
-            filename = f"translated_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}{streaming_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
+            filename = f"{dataset.name}_{self.source_lang}_to_{self.target_lang}_{self.backend}{batch_suffix}{streaming_suffix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             output_path = os.path.join(output_dir, filename)
         else:
             # Ensure output directory exists
@@ -565,7 +565,7 @@ class LLMTranslator(Translator):
         
         # Setup media output directory
         if media_output_dir is None:
-            media_output_dir = os.path.join(output_dir, "media")
+            media_output_dir = os.path.join(output_dir, f"{dataset.name}_media")
         os.makedirs(media_output_dir, exist_ok=True)
         
         # Determine total samples (only if not streaming)
