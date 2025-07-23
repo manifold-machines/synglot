@@ -18,6 +18,21 @@ python main.py translate --hf-dataset opus100 --target-lang fr --source-lang en 
 # Customize the batch request limit (useful if OpenAI changes their limits)
 python main.py translate --hf-dataset large_dataset --target-lang es --source-lang en --backend openai --use-batch --batch-request-limit 30000
 
+# Use streaming mode for very large datasets to reduce memory usage
+python main.py translate --hf-dataset very_large_dataset --target-lang fr --source-lang en --backend nllb --streaming-mode --batch-size 16
+
+# Translate nested fields like Q&A datasets
+python main.py translate --hf-dataset squad --columns qa.question,qa.answer --target-lang es --source-lang en --backend openai
+
+# Use NLLB with GPU and auto batch size reduction for out-of-memory protection
+python main.py translate --hf-dataset large_dataset --target-lang zh --source-lang en --backend nllb --device cuda --auto-reduce-batch-size --min-batch-size 4
+
+# Google Translate with custom project and media handling
+python main.py translate --dataset-path dataset.json --target-lang ja --source-lang en --backend google --project-id my-project --media-output-dir ./media_files
+
+# Append translations to existing file with custom progress reporting
+python main.py translate --dataset-path new_data.csv --target-lang de --source-lang en --backend marianmt --append-mode --progress-interval 5
+
 Generation:
   
 # Generate pretraining data
@@ -101,7 +116,7 @@ def setup_translate_parser(subparsers):
         '--columns',
         type=str,
         required=False,
-        help='Comma-separated list of column names to translate (if not provided, all columns will be translated)'
+        help='Comma-separated list of column names to translate (if not provided, all columns will be translated). Supports nested fields like "qa.question"'
     )
     translate_parser.add_argument(
         '--source-lang',
@@ -120,7 +135,7 @@ def setup_translate_parser(subparsers):
     translate_parser.add_argument(
         '--backend',
         type=str,
-        choices=['marianmt', 'openai', 'google'],
+        choices=['marianmt', 'openai', 'google', 'nllb'],
         default='openai',
         help='Translation backend to use (default: openai)'
     )
@@ -128,6 +143,17 @@ def setup_translate_parser(subparsers):
         '--model-name',
         type=str,
         help='Specific model name (optional, backend will choose default)'
+    )
+    translate_parser.add_argument(
+        '--device',
+        type=str,
+        default='auto',
+        help='Device for NLLB model (auto, cpu, cuda, or specific device like cuda:0). Default: auto'
+    )
+    translate_parser.add_argument(
+        '--project-id',
+        type=str,
+        help='Google Cloud project ID (required for Google backend, can also use GOOGLE_CLOUD_PROJECT_ID env var)'
     )
     
     # Output options
@@ -148,6 +174,8 @@ def setup_translate_parser(subparsers):
         default=32,
         help='Batch size for translation (default: 32)'
     )
+    
+    # Batch processing options
     translate_parser.add_argument(
         '--use-batch',
         action='store_true',
@@ -165,6 +193,80 @@ def setup_translate_parser(subparsers):
         default=1900000,
         help='Maximum tokens per OpenAI batch job (default: 1900000). Only applies to OpenAI backend with --use-batch.'
     )
+    translate_parser.add_argument(
+        '--batch-job-description',
+        type=str,
+        default='CLI dataset translation',
+        help='Description for OpenAI batch jobs (default: CLI dataset translation)'
+    )
+    
+    # Advanced processing options
+    translate_parser.add_argument(
+        '--streaming-mode',
+        action='store_true',
+        help='Process dataset in streaming mode for very large datasets (reduces memory usage)'
+    )
+    translate_parser.add_argument(
+        '--auto-reduce-batch-size',
+        action='store_true',
+        default=True,
+        help='Automatically reduce batch size on out-of-memory errors (default: enabled)'
+    )
+    translate_parser.add_argument(
+        '--no-auto-reduce-batch-size',
+        action='store_false',
+        dest='auto_reduce_batch_size',
+        help='Disable automatic batch size reduction on OOM errors'
+    )
+    translate_parser.add_argument(
+        '--min-batch-size',
+        type=int,
+        default=1,
+        help='Minimum batch size when auto-reducing (default: 1)'
+    )
+    
+    # Nested field and data structure options
+    translate_parser.add_argument(
+        '--nested-field-separator',
+        type=str,
+        default='.',
+        help='Separator for nested field names like "qa.question" (default: .)'
+    )
+    
+    # Media and file handling options
+    translate_parser.add_argument(
+        '--media-output-dir',
+        type=str,
+        help='Directory to save media files (images, etc.). If not specified, uses {output_dir}/{dataset_name}_media'
+    )
+    translate_parser.add_argument(
+        '--media-field-name',
+        type=str,
+        default='image',
+        help='Name of the field containing media data (default: image)'
+    )
+    
+    # Progress and error handling options
+    translate_parser.add_argument(
+        '--progress-interval',
+        type=int,
+        default=10,
+        help='Print progress every N samples in sequential mode (default: 10)'
+    )
+    translate_parser.add_argument(
+        '--no-save-errors',
+        action='store_false',
+        dest='save_errors',
+        default=True,
+        help='Do not save error records to output file (default: errors are saved)'
+    )
+    translate_parser.add_argument(
+        '--append-mode',
+        action='store_true',
+        help='Append to existing output file instead of overwriting'
+    )
+    
+    # Testing and debugging options
     translate_parser.add_argument(
         '--max-samples',
         type=int,
@@ -419,6 +521,18 @@ def run_translate(args):
     print(f"Starting translation from {args.source_lang} to {args.target_lang}")
     print(f"Backend: {args.backend}")
     
+    # Print additional options when enabled
+    if args.streaming_mode:
+        print("Streaming mode: ENABLED (for large datasets)")
+    if args.auto_reduce_batch_size:
+        print(f"Auto batch size reduction: ENABLED (min: {args.min_batch_size})")
+    if args.nested_field_separator != '.':
+        print(f"Nested field separator: '{args.nested_field_separator}'")
+    if args.media_output_dir:
+        print(f"Media output directory: {args.media_output_dir}")
+    if args.append_mode:
+        print("Append mode: ENABLED")
+    
     # Load dataset
     dataset = load_dataset(args)
     
@@ -439,18 +553,22 @@ def run_translate(args):
     
     print(f"Columns to translate: {columns_to_translate}")
     
-    # Initialize translator
+    # Initialize translator with new parameters
     translator = LLMTranslator(
         source_lang=args.source_lang,
         target_lang=args.target_lang,
         backend=args.backend,
-        model_name=args.model_name
+        model_name=args.model_name,
+        device=args.device,
+        project_id=args.project_id
     )
     
     # Run translation
     try:
         if args.use_batch:
             print("Using batch translation for better performance...")
+        elif args.streaming_mode:
+            print("Using streaming mode for large dataset processing...")
         else:
             print("Using sequential translation...")
             
@@ -460,9 +578,19 @@ def run_translate(args):
             output_path=args.output_path,
             output_dir=args.output_dir,
             batch_size=args.batch_size,
+            progress_interval=args.progress_interval,
+            save_errors=args.save_errors,
+            append_mode=args.append_mode,
             use_batch=args.use_batch,
+            batch_job_description=args.batch_job_description,
             batch_request_limit=args.batch_request_limit,
-            batch_token_limit=args.batch_token_limit
+            batch_token_limit=args.batch_token_limit,
+            streaming_mode=args.streaming_mode,
+            auto_reduce_batch_size=args.auto_reduce_batch_size,
+            min_batch_size=args.min_batch_size,
+            nested_field_separator=args.nested_field_separator,
+            media_output_dir=args.media_output_dir,
+            media_field_name=args.media_field_name
         )
         
         print("\n" + "="*50)
@@ -484,7 +612,7 @@ def run_translate(args):
             print("Multiple OpenAI batch jobs created successfully!")
             print(f"Total batches created: {result['total_batches']}")
             print(f"Total requests: {result['total_requests']}")
-            print(f"Each batch respects OpenAI's 40,000 request limit")
+            print(f"Each batch respects OpenAI's {result.get('batch_request_limit', 50000)} request limit")
             print("\nBatch details:")
             for i, batch_job in enumerate(result['batch_jobs'], 1):
                 print(f"  Batch {i}: ID {batch_job['batch_id']}, {batch_job['total_requests']} requests")
