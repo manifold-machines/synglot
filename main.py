@@ -595,22 +595,14 @@ def run_translate(args):
     # Load dataset
     dataset = load_dataset_from_args(args)
     
-    if len(dataset) == 0:
-        print("Error: Dataset is empty")
-        return
-    
     # Parse columns to translate
     if args.columns:
         columns_to_translate = [col.strip() for col in args.columns.split(',')]
+        print(f"Columns to translate: {columns_to_translate}")
     else:
-        # If no columns specified, translate all available columns
-        if hasattr(dataset, 'column_names') and dataset.column_names:
-            columns_to_translate = list(dataset.column_names)
-        else:
-            print("Error: Dataset has no columns and no columns were specified for translation")
-            return
-    
-    print(f"Columns to translate: {columns_to_translate}")
+        # If no columns specified, let the translator auto-detect translatable columns
+        columns_to_translate = None
+        print("No columns specified - translator will auto-detect translatable columns")
     
     # Initialize translator with new parameters
     translator = LLMTranslator(

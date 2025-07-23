@@ -613,6 +613,7 @@ class LLMTranslator(Translator):
                     sample_data.append(next(dataset_iter))
                 except StopIteration:
                     break
+            all_columns = None  # Streaming datasets don't have predefined columns
         else:
             if hasattr(dataset, 'columns') and dataset.columns:
                 all_columns = list(dataset.columns)
