@@ -1,7 +1,7 @@
 class Dataset:
     """Core dataset class for handling multilingual data."""
     
-    def __init__(self, data=None, source_lang=None, target_lang=None):
+    def __init__(self, data=None, source_lang=None, target_lang=None, name=None):
         """
         Initialize dataset with optional data.
         
@@ -9,6 +9,7 @@ class Dataset:
             data (list/dict/str): Input data or path to data
             source_lang (str): Source language code
             target_lang (str): Target language code
+            name (str): Optional name for the dataset
         """
         self._data = []
         if isinstance(data, str):
@@ -24,6 +25,7 @@ class Dataset:
 
         self.source_lang = source_lang
         self.target_lang = target_lang
+        self.name = name
         
     def load_from_huggingface(self, dataset_name, split="train", columns=None, config_name=None):
         """Load data from HuggingFace datasets."""
@@ -109,7 +111,7 @@ class Dataset:
 
         if not self._data:
             print("Dataset is empty. Cannot sample.")
-            return Dataset([])
+            return Dataset([], self.source_lang, self.target_lang, self.name)
 
         if n > len(self._data):
             print(f"Requested sample size {n} is larger than dataset size {len(self._data)}. Returning all data.")
@@ -119,23 +121,23 @@ class Dataset:
             random.seed(random_state)
             
         sampled_data = random.sample(self._data, n)
-        return Dataset(sampled_data, self.source_lang, self.target_lang)
+        return Dataset(sampled_data, self.source_lang, self.target_lang, self.name)
 
     def head(self, n=5):
         """Get first n samples from the dataset."""
         if not self._data:
             print("Dataset is empty. Cannot get head.")
-            return Dataset([])
+            return Dataset([], self.source_lang, self.target_lang, self.name)
         
-        return Dataset(self._data[:n], self.source_lang, self.target_lang)
+        return Dataset(self._data[:n], self.source_lang, self.target_lang, self.name)
 
     def tail(self, n=5):
         """Get last n samples from the dataset."""
         if not self._data:
             print("Dataset is empty. Cannot get tail.")
-            return Dataset([])
+            return Dataset([], self.source_lang, self.target_lang, self.name)
         
-        return Dataset(self._data[-n:], self.source_lang, self.target_lang)
+        return Dataset(self._data[-n:], self.source_lang, self.target_lang, self.name)
 
     def shuffle(self, random_state=None):
         """Shuffle the dataset in place."""
@@ -152,6 +154,7 @@ class Dataset:
         new_dataset._data = copy.deepcopy(self._data)
         new_dataset.source_lang = self.source_lang
         new_dataset.target_lang = self.target_lang
+        new_dataset.name = self.name
         return new_dataset
 
     def filter(self, condition):
@@ -165,7 +168,7 @@ class Dataset:
             Dataset: New filtered dataset
         """
         filtered_data = [row for row in self._data if condition(row)]
-        return Dataset(filtered_data, self.source_lang, self.target_lang)
+        return Dataset(filtered_data, self.source_lang, self.target_lang, self.name)
 
     def map(self, transform_fn, columns=None):
         """
@@ -191,7 +194,7 @@ class Dataset:
                         new_row[col] = transform_fn(row[col])
                 transformed_data.append(new_row)
         
-        return Dataset(transformed_data, self.source_lang, self.target_lang)
+        return Dataset(transformed_data, self.source_lang, self.target_lang, self.name)
 
     def select_columns(self, columns):
         """
@@ -204,14 +207,14 @@ class Dataset:
             Dataset: New dataset with only selected columns
         """
         if not self._data:
-            return Dataset([])
+            return Dataset([], self.source_lang, self.target_lang, self.name)
         
         selected_data = []
         for row in self._data:
             selected_row = {col: row.get(col) for col in columns if col in row}
             selected_data.append(selected_row)
         
-        return Dataset(selected_data, self.source_lang, self.target_lang)
+        return Dataset(selected_data, self.source_lang, self.target_lang, self.name)
 
     def drop_columns(self, columns):
         """
@@ -231,7 +234,7 @@ class Dataset:
             new_row = {k: v for k, v in row.items() if k not in columns}
             dropped_data.append(new_row)
         
-        return Dataset(dropped_data, self.source_lang, self.target_lang)
+        return Dataset(dropped_data, self.source_lang, self.target_lang, self.name)
 
     def rename_columns(self, column_mapping):
         """
@@ -254,7 +257,7 @@ class Dataset:
                 new_row[new_key] = v
             renamed_data.append(new_row)
         
-        return Dataset(renamed_data, self.source_lang, self.target_lang)
+        return Dataset(renamed_data, self.source_lang, self.target_lang, self.name)
 
     def add_column(self, column_name, values=None, default_value=None):
         """
@@ -280,7 +283,7 @@ class Dataset:
                 new_row[column_name] = default_value
             new_data.append(new_row)
         
-        return Dataset(new_data, self.source_lang, self.target_lang)
+        return Dataset(new_data, self.source_lang, self.target_lang, self.name)
 
     def sort(self, key_column, reverse=False):
         """
@@ -298,7 +301,7 @@ class Dataset:
         
         try:
             sorted_data = sorted(self._data, key=lambda x: x.get(key_column), reverse=reverse)
-            return Dataset(sorted_data, self.source_lang, self.target_lang)
+            return Dataset(sorted_data, self.source_lang, self.target_lang, self.name)
         except Exception as e:
             print(f"Error sorting by column '{key_column}': {e}")
             return self.copy()
@@ -357,7 +360,7 @@ class Dataset:
             groups[group_key].append(row)
         
         # Convert lists to Dataset objects
-        return {k: Dataset(v, self.source_lang, self.target_lang) for k, v in groups.items()}
+        return {k: Dataset(v, self.source_lang, self.target_lang, self.name) for k, v in groups.items()}
 
     def concat(self, other_dataset):
         """
@@ -373,7 +376,7 @@ class Dataset:
             raise TypeError("Can only concatenate with another Dataset object")
         
         combined_data = self._data + other_dataset._data
-        return Dataset(combined_data, self.source_lang, self.target_lang)
+        return Dataset(combined_data, self.source_lang, self.target_lang, self.name)
 
     def info(self):
         """Print information about the dataset."""
@@ -385,6 +388,7 @@ class Dataset:
         print(f"  Number of rows: {len(self._data)}")
         print(f"  Source language: {self.source_lang}")
         print(f"  Target language: {self.target_lang}")
+        print(f"  Name: {self.name}")
         
         if isinstance(self._data[0], dict):
             columns = list(self._data[0].keys())
@@ -474,7 +478,7 @@ class Dataset:
         # Handle slicing
         elif isinstance(idx, slice):
             sliced_data = self._data[idx]
-            return Dataset(sliced_data, self.source_lang, self.target_lang)
+            return Dataset(sliced_data, self.source_lang, self.target_lang, self.name)
         
         # Handle single integer index
         elif isinstance(idx, int):
@@ -510,7 +514,7 @@ class Dataset:
                 for row in rows:
                     selected_row = {col: row.get(col) for col in col_idx if col in row}
                     result_data.append(selected_row)
-                return Dataset(result_data, self.source_lang, self.target_lang)
+                return Dataset(result_data, self.source_lang, self.target_lang, self.name)
             else:
                 raise TypeError("Column index must be string or list of strings")
         
