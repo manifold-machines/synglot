@@ -6,6 +6,8 @@ from synglot.translate.llm_translator import LLMTranslator
 import torch
 from itertools import islice
 from PIL import Image
+from huggingface_hub import login
+from dotenv import load_dotenv
 
 def translate_batch_texts(texts, translator):
     """Translate a batch of texts using the translator's batch capabilities."""
@@ -133,6 +135,11 @@ def batch_translate_dataset(source_lang='en', target_lang='es', initial_batch_si
     print(f"Images saved to: {images_dir}")
 
 if __name__ == "__main__":
+    load_dotenv()
+    hf_token = os.getenv("HF_TOKEN")
+    print(hf_token)
+    login(token=hf_token)
+    print("Logged in to HuggingFace")
     # Example: Translate from English to Macedonian
     # Change these parameters as needed
     batch_translate_dataset(
