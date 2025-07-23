@@ -1070,36 +1070,41 @@ class LLMTranslator(Translator):
                 print(f"Preparing batch requests for column: {column}")
                 
                 for i, item in enumerate(dataset_list):
-                    text = item.get(column) if isinstance(item, dict) else str(item)
-                    if text is not None and str(text).strip():
-                        # Create request to calculate token consumption
-                        request_json = {
-                            "model": self.model_name,
-                            "messages": [
-                                {
-                                    "role": "system",
-                                    "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
-                                },
-                                {
-                                    "role": "user",
-                                    "content": str(text)
-                                }
-                            ],
-                            "max_completion_tokens": self.max_gen_tokens,
-                            "temperature": 0.4
-                        }
-                        
-                        token_count = self._num_tokens_consumed_from_request(request_json)
-                        
-                        all_texts_with_metadata.append({
-                            "text": str(text),
-                            "column": column,
-                            "sample_index": i,
-                            "request_id": request_id,
-                            "token_count": token_count,
-                            "request_json": request_json
-                        })
-                        request_id += 1
+                    # Use the helper method to extract texts from nested fields
+                    texts = self._extract_texts_from_field(item, column, ".")
+                    
+                    for text_info in texts:
+                        text = text_info['text']
+                        if text is not None and str(text).strip():
+                            # Create request to calculate token consumption
+                            request_json = {
+                                "model": self.model_name,
+                                "messages": [
+                                    {
+                                        "role": "system",
+                                        "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": str(text)
+                                    }
+                                ],
+                                "max_completion_tokens": self.max_gen_tokens,
+                                "temperature": 0.4
+                            }
+                            
+                            token_count = self._num_tokens_consumed_from_request(request_json)
+                            
+                            all_texts_with_metadata.append({
+                                "text": str(text),
+                                "column": column,
+                                "sample_index": i,
+                                "request_id": request_id,
+                                "token_count": token_count,
+                                "request_json": request_json,
+                                "text_info": text_info  # Include text metadata for proper reconstruction
+                            })
+                            request_id += 1
             
             if not all_texts_with_metadata:
                 raise ValueError("No valid texts found for translation")
@@ -1310,8 +1315,23 @@ class LLMTranslator(Translator):
             with tempfile.NamedTemporaryFile(mode='w', suffix='.jsonl', delete=False) as batchfile:
                 temp_file_path = batchfile.name
                 for item in texts_with_metadata:
+                    # Encode text_info metadata into custom_id for proper reconstruction
+                    text_info = item.get('text_info', {})
+                    field_path = text_info.get('path', item['column'])
+                    list_index = text_info.get('index', '')
+                    
+                    # Create enhanced custom_id with nested field information
+                    custom_id_parts = [
+                        f"req-{item['request_id']}",
+                        f"col-{item['column']}",
+                        f"sample-{item['sample_index']}",
+                        f"path-{field_path.replace('.', '_DOT_')}",  # Replace dots to avoid parsing issues
+                        f"idx-{list_index}" if list_index != '' else "idx-none"
+                    ]
+                    custom_id = "-".join(custom_id_parts)
+                    
                     request = {
-                        "custom_id": f"req-{item['request_id']}-{item['column']}-{item['sample_index']}",
+                        "custom_id": custom_id,
                         "method": "POST", 
                         "url": "/v1/chat/completions",
                         "body": item["request_json"]

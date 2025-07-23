@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Union, Optional
 
 
-def retrieve_batch(client, batch_job_or_result, save_results=True, batch_type="generation"):
+def retrieve_batch(client, batch_job_or_result, save_results=True, batch_type="translation"):
     """
     Retrieve batch output content when the batch job is done.
     Handles both simple batch jobs and dataset batch jobs for both translation and generation.
@@ -106,12 +106,20 @@ def _process_translation_batch_results(file_content, batch_job_or_result, output
     
     for result in results:
         custom_id = result.get("custom_id", "")
-        # Parse custom_id: "req-{request_id}-{column}-{sample_index}"
+        # Parse enhanced custom_id: "req-{request_id}-col-{column}-sample-{sample_index}-path-{field_path}-idx-{list_index}"
         parts = custom_id.split("-")
-        if len(parts) >= 4:
+        if len(parts) >= 8:  # New format with path and index info
+            request_id = int(parts[1])
+            column = parts[3]  # After "col-"
+            sample_index = int(parts[5])  # After "sample-"
+            field_path = parts[7].replace('_DOT_', '.')  # After "path-", restore dots
+            list_index = None if parts[9] == 'none' else int(parts[9]) if parts[9].isdigit() else None  # After "idx-"
+        elif len(parts) >= 4:  # Fallback to old format
             request_id = int(parts[1])
             column = parts[2]
             sample_index = int(parts[3])
+            field_path = column
+            list_index = None
             
             if result.get("response") and result["response"].get("body"):
                 # Success
@@ -123,6 +131,8 @@ def _process_translation_batch_results(file_content, batch_job_or_result, output
                         "column": column,
                         "sample_index": sample_index,
                         "request_id": request_id,
+                        "field_path": field_path,
+                        "list_index": list_index,
                         "status": "success"
                     }
                     success_count += 1
@@ -133,6 +143,8 @@ def _process_translation_batch_results(file_content, batch_job_or_result, output
                         "column": column,
                         "sample_index": sample_index,
                         "request_id": request_id,
+                        "field_path": field_path,
+                        "list_index": list_index,
                         "status": "error",
                         "error": "No translation in response"
                     }
@@ -145,6 +157,8 @@ def _process_translation_batch_results(file_content, batch_job_or_result, output
                     "column": column,
                     "sample_index": sample_index,
                     "request_id": request_id,
+                    "field_path": field_path,
+                    "list_index": list_index,
                     "status": "error",
                     "error": error_msg
                 }
