@@ -1,5 +1,6 @@
 from synglot.translate.llm_translator import LLMTranslator
 from datasets import load_dataset
+import wandb
 
 
 def translate_mmmu():
@@ -13,7 +14,14 @@ def translate_mmmu():
     project_id="synglot-441912",
     device="cuda"
     )
-    for config in mmmu_configs:
+    
+    # Log total number of configs to process
+    wandb.log({"total_configs": len(mmmu_configs)})
+    
+    for i, config in enumerate(mmmu_configs):
+        print(f"Processing config {i+1}/{len(mmmu_configs)}: {config}")
+        wandb.log({"current_config": config, "config_progress": i+1})
+        
         dataset = load_dataset("MMMU/MMMU", config, split="test")
         result = translator.translate_dataset(
             dataset=dataset,
@@ -25,8 +33,19 @@ def translate_mmmu():
             media_field_name="image",
             output_dir=f"evaluation/mmmu_{config}"
         )
+        
+        # Log translation results for this config
+        log_data = {f"{config}_{key}": value for key, value in result.items()}
+        log_data["completed_configs"] = i + 1
+        wandb.log(log_data)
+        
         for key, value in result.items():
             print(f"  {key}: {value}")
+    
+    # Log completion
+    wandb.log({"translation_complete": True})
+    print("All MMMU configs translated successfully!")
 
 if __name__ == "__main__":
+    wandb.init(project="mmmu-translation", entity="manifold-multimodal")
     translate_mmmu()
