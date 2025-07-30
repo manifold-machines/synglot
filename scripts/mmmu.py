@@ -22,7 +22,7 @@ def translate_mmmu():
         print(f"Processing config {i+1}/{len(mmmu_configs)}: {config}")
         wandb.log({"current_config": config, "config_progress": i+1})
         
-        dataset = load_dataset("MMMU/MMMU", config, split="test")
+        dataset = load_dataset("MMMU/MMMU", config, split="validation")
         result = translator.translate_dataset(
             dataset=dataset,
             columns_to_translate=["question", "options"],
