@@ -317,4 +317,34 @@ def extract_topics_from_text(text: str, max_topics: int = 10) -> List[str]:
     sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
     topics = [word for word, freq in sorted_words[:max_topics] if freq > 1]
     
-    return topics 
+    return topics
+
+
+def num_tokens_consumed_from_request(request_json: dict, encoding, max_gen_tokens: int = 1024) -> int:
+    """
+    Count the number of tokens in a chat completion request.
+    
+    Args:
+        request_json: The request dictionary for chat completion
+        encoding: The tiktoken encoding object to use for counting
+        max_gen_tokens: Default max generation tokens if not specified in request
+        
+    Returns:
+        Total number of tokens that would be consumed by the request
+    """
+    num_tokens = 0
+    messages = request_json.get("messages", [])
+    
+    for message in messages:
+        num_tokens += 4  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+        for key, value in message.items():
+            num_tokens += len(encoding.encode(str(value)))
+            if key == "name":  # if there's a name, the role is omitted
+                num_tokens -= 1  # role is always required and always 1 token
+    num_tokens += 2  # every reply is primed with <im_start>assistant
+    
+    # Add completion tokens
+    max_completion_tokens = request_json.get("max_completion_tokens", max_gen_tokens)
+    num_tokens += max_completion_tokens
+    
+    return num_tokens 
