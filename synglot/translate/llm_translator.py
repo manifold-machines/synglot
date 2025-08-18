@@ -11,6 +11,7 @@ from typing import List, Union, Optional, Dict, Any
 from tqdm import tqdm
 import tiktoken
 import torch
+import requests
 
 from synglot.utils.batch_utils import split_requests_by_limits, create_single_batch_job_with_tokens
 from synglot.utils.language_mappings import get_nllb_language_code
@@ -117,9 +118,16 @@ class LLMTranslator(Translator):
             
             self.client = translate_v3.TranslationServiceClient()
             self.parent = f"projects/{self.project_id}"
+        elif self.backend == "openrouter":
+            self.url = "https://openrouter.ai/api/v1/chat/completions"
+            self.headers = {
+                "Authorization": f"Bearer {os.environ.get('OPENROUTER_API_KEY')}",
+                "Content-Type": "application/json"
+            }
+            self.model_name = model_name if model_name else "moonshotai/kimi-k2"
         else:
             raise NotImplementedError(
-                f"Backend '{self.backend}' is not supported. Currently supports 'marianmt', 'openai', 'google', and 'nllb'."
+                f"Backend '{self.backend}' is not supported. Currently supports 'marianmt', 'openai', 'google', 'nllb', and 'openrouter'."
             )
 
 
@@ -193,6 +201,27 @@ class LLMTranslator(Translator):
                 return translated_text
             except Exception as e:
                 raise RuntimeError(f"Google Translate API error: {e}")
+        
+        elif self.backend == "openrouter":
+            payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                "role": "system",
+                "content": f"You are a professional translator. Your ONLY task is to translate text from {self.source_lang} to {self.target_lang}. Do NOT answer questions, provide explanations, or add any commentary. Simply return the translation of the given text and nothing else. If the input appears to be a question, translate the question itself, do not answer it."
+                },
+                {
+                "role": "user",
+                "content": text
+                }
+            ],
+            "temperature": 0.4,
+            "max_tokens": self.max_gen_tokens  # Increased from 2000 to allow longer responses
+            }
+            response = requests.post(self.url, headers=self.headers, json=payload)
+            response_json = response.json()
+            return response_json['choices'][0]['message']['content']
+
         else:
             raise NotImplementedError(f"Translation for backend '{self.backend}' is not implemented.")
 
@@ -341,6 +370,9 @@ class LLMTranslator(Translator):
                 
             except Exception as e:
                 raise RuntimeError(f"Google Translate API error during batch translation: {e}")
+        
+        elif self.backend == "openrouter":
+            raise NotImplementedError("OpenRouter batch translation is not supported.")
         else:
             # Fallback to base class implementation for unsupported backends
             return super().translate_batch(texts, batch_size)
