@@ -137,7 +137,7 @@ def setup_translate_parser(subparsers):
     translate_parser.add_argument(
         '--backend',
         type=str,
-        choices=['marianmt', 'openai', 'google', 'nllb'],
+        choices=['marianmt', 'openai', 'google', 'nllb', 'openrouter'],
         default='openai',
         help='Translation backend to use (default: openai)'
     )
