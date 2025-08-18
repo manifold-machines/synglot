@@ -15,11 +15,11 @@
 - add sentence splitting to the NLLB backend for higher quality.
 - integrate the PDF scripts into the core Synglot library
 - refactor and implement real generation functionality
-- add OpenRouter support for more providers
+- ✅ add OpenRouter support for more providers
 
 ## Key Features
 
-- **Unified Translation**: Multi-backend translation supporting MarianMT, NLLB, OpenAI, and Google Translate APIs
+- **Unified Translation**: Multi-backend translation supporting MarianMT, NLLB, OpenAI, Google Translate, and OpenRouter APIs
 - **Generation**: Synthetic data generation with HuggingFace and OpenAI backends
 - **Powerful Dataset Management**: Comprehensive dataset handling with pandas-like operations
 - **Batch Processing**: Process many examples at once with optimized performance (especially NLLB)
@@ -53,6 +53,11 @@ export GOOGLE_CLOUD_PROJECT_ID="your-project-id"
 # Set up authentication (see CLI guide for details)
 ```
 
+#### For OpenRouter Support
+```bash
+export OPENROUTER_API_KEY="your-openrouter-api-key"
+```
+
 #### For HuggingFace Models (MarianMT and NLLB)
 ```bash
 uv pip install transformers torch
@@ -69,7 +74,7 @@ from synglot.dataset import Dataset
 dataset = Dataset()
 dataset.load_from_huggingface("squad", split="train[:100]", columns=["question", "context"])
 
-# Initialize translator (supports 'marianmt', 'nllb', 'openai', 'google')
+# Initialize translator (supports 'marianmt', 'nllb', 'openai', 'google', 'openrouter')
 translator = LLMTranslator("en", "es", backend="nllb")
 
 # Translate dataset with comprehensive error handling
@@ -127,6 +132,7 @@ python main.py translate \
 - **NLLB**: High-performance, 200+ languages, optimized batch processing (free, offline)
 - **OpenAI**: High-quality translation with batch processing support
 - **Google Translate**: 100+ languages, cost-effective for large volumes
+- **OpenRouter**: Access to multiple AI providers through a unified API
 
 ### Generation Backends
 - **HuggingFace**: Local models (Qwen, Llama, etc.) with full parameter control
@@ -172,16 +178,16 @@ precise_gen = LLMGenerator.from_preset("precise", "en", temperature=0.1)
 
 ## Backend Comparison
 
-| Feature | MarianMT | NLLB | OpenAI | Google Translate |
-|---------|----------|------|--------|------------------|
-| **Setup** | Medium | Easy | Easy | Medium |
-| **Cost** | Free | Free | Pay per token | Pay per character |
-| **Quality** | Good | Excellent | Excellent | Excellent |
-| **Speed** | Fast (local) | Very Fast (local) | Medium | Fast |
-| **Languages** | Limited pairs | 200+ | Many | 100+ |
-| **Batch** | Yes | Optimized | Yes (async) | Yes |
-| **Offline** | Yes | Yes | No | No |
-| **Best For** | Development, Privacy | High performance, Many languages | High quality, Complex | Cost-effective |
+| Feature | MarianMT | NLLB | OpenAI | Google Translate | OpenRouter |
+|---------|----------|------|--------|------------------|------------|
+| **Setup** | Medium | Easy | Easy | Medium | Easy |
+| **Cost** | Free | Free | Pay per token | Pay per character | Pay per token |
+| **Quality** | Good | Excellent | Excellent | Excellent | Varies by model |
+| **Speed** | Fast (local) | Very Fast (local) | Medium | Fast | Medium |
+| **Languages** | Limited pairs | 200+ | Many | 100+ | Varies by model |
+| **Batch** | Yes | Optimized | Yes (async) | Yes | No |
+| **Offline** | Yes | Yes | No | No | No |
+| **Best For** | Development, Privacy | High performance, Many languages | High quality, Complex | Cost-effective | Model diversity |
 
 ## Advanced Features
 
