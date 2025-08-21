@@ -536,7 +536,12 @@ class LLMTranslator(Translator):
                     if batch_texts:
                         print(f"  Translating batch of {len(batch_texts)} texts...")
                         if hasattr(self, 'translate_batch'):
-                            translated_texts = self.translate_batch(batch_texts)
+                            try:
+                                translated_texts = self.translate_batch(batch_texts)
+                            except NotImplementedError:
+                                # Fallback to individual translation for backends that don't support batch
+                                print(f"    Batch translation not supported for {self.backend}, using individual translation...")
+                                translated_texts = [self.translate(text) for text in batch_texts]
                         else:
                             translated_texts = [self.translate(text) for text in batch_texts]
                         
